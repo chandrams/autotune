@@ -36,9 +36,10 @@ TESTS_FAILED=0
 TESTS_PASSED=0
 TESTS=0
 
-TEST_SUITE_ARRAY=("app_autotune_yaml_tests" "autotune_config_yaml_tests" "basic_api_tests")
+TEST_SUITE_ARRAY=("app_autotune_yaml_tests" "autotune_config_yaml_tests" "basic_api_tests" "sanity")
 AUTOTUNE_IMAGE="kruize/autotune:test"
 matched=0
+sanity=0
 setup=1
 
 # checks if the previous command is executed successfully
@@ -409,7 +410,21 @@ function run_test() {
 		echo "                    Running Testcases for ${test}"
 		echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 		typeset -n var="${test}_testcases"
-		for testcase in ${var[@]}
+		
+		# check if is the sanity test , if so then perform only the sanity bucket list
+		test_var=()
+		if [ "${sanity}" -eq "1" ]; then
+			for testcase in ${var[@]}
+			do
+				if [[ "${testcase}" == invalid* || "${testcase}" == valid* || "${testcase}" == blank* ]]; then 
+					test_var+=(${testcase})
+				fi
+			done
+		else
+			test_var+=(${var[@]})
+		fi
+		
+		for testcase in ${test_var[@]}
 		do 
 			yaml=${path}/${test}/${testcase}
 			typeset -n autotune_object="${test}_autotune_objects[${testcase}]"
