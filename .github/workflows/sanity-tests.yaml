@@ -13,10 +13,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v2
-         with:
+      - name: Checkout autotune
+        uses: actions/checkout@v2
+        with:
+          repository: kruize/autotune
+          path: autotune
+
+      - name: Checkout benchmarks
+        uses: actions/checkout@v2
+        with:
           repository: kruize/benchmarks
+          path: benchmarks
       - name: Setup Minikube
         uses: manusa/actions-setup-minikube@v2.3.0
         with:
@@ -29,11 +36,19 @@ jobs:
       - name: Install Prometheus on minikube
         run: |
           echo Install Prometheus on minikube  
-          cd scripts
+          cd autotune/scripts
           ./prometheus_on_minikube.sh -as    
       - name: Run Sanity tests
         run: |
           echo Running Sanity tests
-          cd tests
-          ./test_autotune.sh -c minikube -i kruize/autotune:test --tctype=functional --testsuite=app_autotune_yaml_tests --testcase=sla_class -r $GIHUB_WORKSPACE/benchmarks --resultsdir=$GITHUB_WORKSPACE/autotune-results
-
+          cd autotune/tests
+          ./test_autotune.sh -c minikube -i kruize/autotune:test --tctype=functional --testsuite=basic_api_tests --resultsdir=${GITHUB_WORKSPACE} -r ${GITHUB_WORKSPACE}/benchmarks
+          cd ${GITHUB_WORKSPACE}
+          ls
+          tar cvf autotune-test-results.tar autotune_test_results
+          ls
+      - name: Upload results
+        uses: actions/upload-artifact@v2
+        with:
+           name: autotune-results
+           path: ./autotune-test-results.tar
