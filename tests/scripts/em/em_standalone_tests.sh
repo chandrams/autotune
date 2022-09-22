@@ -30,6 +30,7 @@ TEST_DIR_="${CURRENT_DIR}/.."
 . ${EM_DIR}/em_ab_test.sh
 . ${EM_DIR}/em_genperfexp_test.sh
 . ${EM_DIR}/em_multiple_trials.sh
+. ${EM_DIR}/em_multiple_exps.sh
 . ${EM_DIR}/../common/em_common_functions.sh
 
 # Tests to validate Experiment Manager standalone 
@@ -41,7 +42,7 @@ function em_standalone_tests() {
 	TESTS=0
 	((TOTAL_TEST_SUITES++))
 
-	em_standalone_tests=("validate_em_ab_workflow" "validate_em_genperfexp_test" "validate_em_multiple_trials")
+	em_standalone_tests=("validate_em_ab_workflow" "validate_em_genperfexp_test" "validate_em_multiple_trials" "validate_em_multiple_exps")
 	
 	# check if the test case is supported
 	if [ ! -z "${testcase}" ]; then

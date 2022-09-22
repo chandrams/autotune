@@ -56,25 +56,23 @@ function form_em_curl_cmd {
 
 	# Form the curl command based on the cluster type
         case $cluster_type in
-           openshift)
-		NAMESPACE="openshift-tuning"
-		echo "NAMESPACE = ${NAMESPACE}"
-		SERVER_IP=$(${kubectl_cmd} get pods -l=app=autotune -o wide -n ${NAMESPACE} -o=custom-columns=NODE:.spec.nodeName --no-headers)
-                AUTOTUNE_PORT=$(oc -n ${NAMESPACE} get svc autotune --no-headers -o=custom-columns=PORT:.spec.ports[*].nodePort)
-	 	;;
+           openshift) ;;
            minikube)
 		NAMESPACE="monitoring"   
 		echo "NAMESPACE = ${NAMESPACE}"
                 AUTOTUNE_PORT=$(kubectl -n ${NAMESPACE} get svc autotune --no-headers -o=custom-columns=PORT:.spec.ports[*].nodePort)
                 SERVER_IP=$(minikube ip)
+                AUTOTUNE_URL="http://${SERVER_IP}"
 		;;
            docker) ;;
            *);;
         esac
 
-	AUTOTUNE_URL="http://${SERVER_IP}"
-	echo "AUTOTUNE_URL = $AUTOTUNE_URL"
-	em_curl_cmd="curl -s -H 'Content-Type: application/json' ${AUTOTUNE_URL}:${AUTOTUNE_PORT}/${API}"
+        if [ $cluster_type == "openshift" ]; then
+                em_curl_cmd="curl -s -H 'Content-Type: application/json' ${AUTOTUNE_URL}/${API}"
+        else
+                em_curl_cmd="curl -s -H 'Content-Type: application/json' ${AUTOTUNE_URL}:${AUTOTUNE_PORT}/${API}"
+        fi
 }
 
 function list_trial_status_summary() {
@@ -93,15 +91,15 @@ function list_trial_status() {
 
 	echo "Forming the curl command to list the status of the experiment..."
 	form_em_curl_cmd "listTrialStatus"
-	echo "em_curl_cmd = ${em_curl_cmd}"
 
 	cmd="${em_curl_cmd}"
+
 	echo "list trial status command  = ${cmd}"
-
+	echo "Getting the status for ${experiment_name} and ${trial_num}..."
 	exp_status_json=$(${cmd})
+	echo "exp_status_json = $exp_status_json"
 
-	exp_status=$(echo ${exp_status_json} | jq '.'${experiment_name}'.'${trial_num}'.status')
-
+	exp_status=$(echo ${exp_status_json} | jq '.'${experiment_name}'.'\"${trial_num}\"'.status')
 	echo "Status of ${experiment_name} is ${exp_status}"
 }
 
@@ -141,18 +139,9 @@ function post_experiment_json() {
 	exp_status_json=$(${em_curl_cmd})
 	echo "Post experiment status = $exp_status_json"
 
-	if [ -z ${exp_status_json} ]; then
-		echo "Posting experiment failed"!
-		echo "Check the autotune pod log for details"
-		echo "RESULTSDIR - ${TEST_DIR}"
-		exit 1
-	fi
-
 	echo "" | tee -a "${LOG}"
 	echo "Command used to post the experiment result= ${em_curl_cmd}" | tee -a "${LOG}"
 	echo "" | tee -a "${LOG}"
-
-	# Add validation to check the status of the post experiment
 
 }
 
@@ -258,7 +247,7 @@ function get_expected_tunable_values() {
 	trial_num=$2
 
 	echo "Fetching expected tunable values from the input json..."
-        config=".[0].trials.${trial_num}.config"
+        config=".[0].trials.\"${trial_num}\".config"
 	echo "config = $config"
 
 	requests=$(cat ${input_json} | jq ''${config}'.requests')
@@ -288,7 +277,6 @@ function get_expected_tunable_values() {
         	echo "CPU limit = ${expected_tunable_values[cpu_limit]}"
 		# Convert the expected cpu values to millicores and in the format as in the new deployment
 		const="1000"
-		expected_tunable_values[cpu_request]=$(bc <<< "${const} * ${expected_tunable_values[cpu_request]}")
 		expected_tunable_values[cpu_limit]=$(bc <<< "${const} * ${expected_tunable_values[cpu_limit]}")
 		expected_tunable_values[cpu_limit]=\""${expected_tunable_values[cpu_limit]%.*}m"\"
 
@@ -366,6 +354,7 @@ function validate_post_result() {
 
 function get_actual_trial_details() {
 	actual_trial_details[experiment_id]=$(cat ${input_json} | jq .[].experiment_id)
+#	actual_trial_details[application_name]=$(cat ${input_json} | jq .[].application_name)
 	actual_trial_details[trial_num]=$(cat ${input_json} | jq .[].trials[].trial_num)
 	actual_trial_details[trial_run]=$(cat ${input_json} | jq .[].trials[].trial_run)
 	actual_trial_details[trial_measurement_time]=$(cat ${input_json} | jq .[].trials[].trial_measurement_time)
@@ -465,13 +454,14 @@ function validate_mean() {
         test_name=$1
 	echo "Validating mean values..."
 
-	echo "trial_metrics_value["mean"] = ${trial_metrics_value['"mean"']}"
+	echo "trial_metrics_value["mean"] = ${trial_metrics_value['"mean"']} 99p = ${trial_metrics_value['"99p"']}"
 	
-	if [ 1 -eq "$(echo "${trial_metrics_value['"mean"']} > 0 " | bc)" ]; then
+	if [ 1 -eq "$(echo "${trial_metrics_value['"mean"']} < ${trial_metrics_value['"99p"']}" | bc)" ]; then
+	#f (( echo "${trial_metrics_value['"mean"']} < ${trial_metrics_value['"99p"']}" | bc -l )); then
                 failed=0
         else
                 failed=1
-        	expected_behaviour="Mean has to be greater than 0"
+        	expected_behaviour="Mean has to be less than 99 percentile"
 	        display_result "${expected_behaviour}" ${test_name} ${failed}
         fi
 }
@@ -605,8 +595,8 @@ function validate_exp_trial_result() {
 #       validate_trial_details
 
         # Needs to be updated for all deployments
-        deployments=$(cat ${result} | jq '.'${experiment_name}'.'${trial_num}'.deployments')
-        deployments_count=$(cat ${result} | jq '.'${experiment_name}'.'${trial_num}'.deployments | length')
+        deployments=$(cat ${result} | jq '.'${experiment_name}'.'\"${trial_num}\"'.deployments')
+        deployments_count=$(cat ${result} | jq '.'${experiment_name}'.'\"${trial_num}\"'.deployments | length')
 
 #        echo "deployments = $deployments"
         echo "deployments_count = $deployments_count"
@@ -619,3 +609,4 @@ function validate_exp_trial_result() {
 	done
 }
 
+export -f post_experiment_json form_em_curl_cmd

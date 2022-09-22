@@ -29,13 +29,22 @@ function validate_em_multiple_trials() {
 	test_name_=${FUNCNAME}
 	em_json="${TEST_DIR_}/resources/em_input_json/GeneralPerfExp.json"
 
+	deployment_name=$(cat ${em_json} | jq '.[0].resource.deployment_name')
+	experiment_name=$(cat ${em_json} | jq '.[0].experiment_name')
+
+	echo "deployment_name = ${deployment_name}"
+	echo "experiment_name = ${experiment_name}"
+	deployment_name=$(echo ${deployment_name} | sed -e "s/\"//g")
+
+
 	# Deploy the application with the specified number of instances	
 	deploy_app ${APP_REPO} ${app} ${instances}
 	
 	# Sleep for sometime for application pods to be up
 	sleep 5
 
-	N_TRIALS=100
+	N_TRIALS=5
+	namespace="default"
 	for (( i=0; i<N_TRIALS; i++ ))
 	do
 		input_json="${TEST_DIR}/GeneralPerfExp-${i}.json"
@@ -54,6 +63,8 @@ function validate_em_multiple_trials() {
 
 		# Post the input json to /createExperimentTrial API
 		post_experiment_json "${input_json}"
+
+		kubectl get deployment ${deployment_name} -o json -n ${namespace} > "${TEST_DIR}/${deployment_name}-${i}.json"
 
 		# Obtain the status of the experiment
 	#	trial_num="${i}"
@@ -103,6 +114,8 @@ function validate_em_multiple_trials() {
 		# Validate the metrics  
 		# validate_exp_trial_result "${experiment_name}" "${trial_num}"
 	done
+
+	list_trial_status_summary
 
 	# Cleanup the deployed application
 #	app_cleanup ${app}
