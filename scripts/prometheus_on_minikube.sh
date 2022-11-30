@@ -69,7 +69,7 @@ function install_prometheus() {
 		pushd kube-prometheus/manifests >/dev/null
 		echo
 		echo "Info: Installing prometheus"
-		kubectl apply -f setup
+		kubectl apply -f setup --force-conflicts=true --server-side
 		check_err "Error: Unable to setup prometheus"
 		kubectl apply -f .
 		check_err "Error: Unable to install prometheus"
