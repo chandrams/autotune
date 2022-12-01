@@ -25,6 +25,7 @@ function check_running() {
 
 	echo "Info: Waiting for ${check_pod} to come up....."
 	err_wait=0
+	counter=0
 	while true;
 	do
 		sleep 2
@@ -49,6 +50,11 @@ function check_running() {
 				sleep 2
 				;;
 		esac
+		if [ $counter == 150 ]; then
+			${kubectl_cmd} describe pod ${scheck_pod}
+			break;
+		fi
+		((counter++))
 	done
 
 	${kubectl_cmd} get pods | grep ${check_pod}
