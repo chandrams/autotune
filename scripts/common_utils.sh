@@ -48,13 +48,19 @@ function check_running() {
 				;;
 			*)
 				sleep 2
+				if [ $counter == 300 ]; then
+					echo "*****************************************************************************************"
+					echo ""
+					${kubectl_cmd} get pods | grep ${check_pod}
+					echo "*****************************************************************************************"
+					echo ""
+					${kubectl_cmd} describe pod ${scheck_pod}
+					echo "ERROR: Prometheus Pods failed to come up!"
+					exit -1
+				fi
+				((counter++))
 				;;
 		esac
-		if [ $counter == 150 ]; then
-			${kubectl_cmd} describe pod ${scheck_pod}
-			break;
-		fi
-		((counter++))
 	done
 
 	${kubectl_cmd} get pods | grep ${check_pod}
