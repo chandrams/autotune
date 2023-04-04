@@ -1,4 +1,4 @@
-# **Kruize Remote monitoring stress test**
+# **Kruize Remote Monitoring stress test**
 
 Kruize Remote monitoring stress test validates the behaviour of [Kruize remote monitoring APIs](/design/MonitoringModeAPI.md) by loading these APIs with multiple requests. These tests use the [Apache jmeter](https://jmeter.apache.org/) tool to generate the load.
 
