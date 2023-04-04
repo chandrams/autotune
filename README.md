@@ -1,5 +1,5 @@
 
-# Kruize Autotune - Autonomous Performance Tuning for Kubernetes !
+# Kruize  Autotune - Autonomous Performance Tuning for Kubernetes !
 
 ## What is Kruize Autotune ?
 
