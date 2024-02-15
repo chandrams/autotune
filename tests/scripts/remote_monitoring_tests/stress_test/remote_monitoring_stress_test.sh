@@ -131,6 +131,7 @@ echo "Invoking jmeter setup...done" | tee -a ${LOG}
 
 echo "Setting up kruize..." | tee -a ${LOG}
 pushd ${KRUIZE_REPO} > /dev/null
+	export deletepartitionsthreshold=60
 	echo "./deploy.sh -c ${CLUSTER_TYPE} -i ${KRUIZE_IMAGE} -m ${target} -t >> ${LOG_DIR}/kruize_setup.log"
 	./deploy.sh -c ${CLUSTER_TYPE} -i ${KRUIZE_IMAGE} -m ${target} -t >> ${LOG_DIR}/kruize_setup.log 2>&1
 
@@ -206,6 +207,16 @@ kruize_log="${JMETER_LOG_DIR}/jmeter_kruize.log"
 host=${SERVER_IP_ADDR}
 
 get_kruize_pod_log ${LOG_DIR}/kruize_pod.log
+
+
+# Create partitions before running the test
+echo ""
+echo "Creating partitions..."
+num_data_points=$((${num_res} * 96))
+echo "python3 create_partitions.py -c ${CLUSTER_TYPE} -a {SERVER_IP_ADDR} -n ${num_data_points}"
+python3 create_partitions.py -c ${CLUSTER_TYPE} -a {SERVER_IP_ADDR} -n ${num_data_points}
+echo "Creating partitions...Done"
+echo ""
 
 # sleep for sometime before starting the experiments to capture initial resource usage of kruize
 sleep 200
