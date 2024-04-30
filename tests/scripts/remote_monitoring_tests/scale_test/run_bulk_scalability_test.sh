@@ -219,6 +219,28 @@ if [ ${expected_results_count} != ${actual_results_count} ]; then
 	echo "Expected results count not found in kruize_results db table"
 fi
 echo "###########################################################################"
+
 echo ""
+echo ""
+echo "###########################################################################"
+echo "Summary of the test run"
+exp_count=$(kubectl exec `kubectl get pods -o=name -n openshift-tuning | grep postgres` -n openshift-tuning -- psql -U admin -d kruizeDB -c "SELECT count(*) from public.kruize_experiments ;" | tail -3 | head -1 | tr -d '[:space:]')
+
+results_count=$(kubectl exec `kubectl get pods -o=name -n openshift-tuning | grep postgres` -n openshift-tuning -- psql -U admin -d kruizeDB -c "SELECT count(*) from public.kruize_results ;" | tail -3 | head -1 | tr -d '[:space:]')
+
+reco_count=$(kubectl exec `kubectl get pods -o=name -n openshift-tuning | grep postgres` -n openshift-tuning -- psql -U admin -d kruizeDB -c "SELECT count(*) from public.kruize_recommendations ;" | tail -3 | head -1 | tr -d '[:space:]')
+
+echo "exp_count / results_count / reco_count = ${exp_count} / ${results_count} / ${reco_count}"
+
+db_size=$(kubectl exec -it `kubectl get pods -o=name -n openshift-tuning | grep postgres` -n openshift-tuning -- psql -U admin -d kruizeDB -c "SELECT pg_database_size('kruizeDB') AS database_size_bytes;")
+
+echo "Postgres DB size in bytes = ${db_size}"
+
+python3 parse_metrics.py -d "${RESULTS_DIR}/results" -f "${expected_results_count}"
+
+echo "###########################################################################"
+echo ""
+echo ""
+
 kill $MYSELF 
 wait
