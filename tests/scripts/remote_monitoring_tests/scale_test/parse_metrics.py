@@ -2,6 +2,28 @@ import csv
 import os
 import argparse
 import sys
+import re
+
+def find_max_exec_time(exec_file):
+    # Define the pattern to match
+    pattern = r"scaletest\d+-\d+: Total time elapsed: (\d{2}:\d{2}:\d{2})"
+
+    with open(exec_file, "r") as file:
+        lines = file.readlines()
+
+    pattern_found = False
+    filtered_lines = []
+
+    # Iterate through lines to find pattern match
+    for line in lines:
+        match = re.search(pattern, line)
+        if match:
+            pattern_found = True
+            time_elapsed = match.group(1)
+            filtered_lines.append(time_elapsed)
+
+    print(filtered_lines)
+    print(f"Execution time - {max(filtered_lines)}")
 
 def compute_max_avg(csv_file, column_name):
     # Initialize max value to infinity
@@ -113,3 +135,8 @@ if max_val is not None:
     print(f"Kruize cpu Max value: {max_val}")
 else:
     print("No valid values found in the specified column.")
+
+exec_time_log = directory_path + "/../exec_time.log"
+print(f"Execution time log - {exec_time_log}")
+find_max_exec_time(exec_time_log)
+
