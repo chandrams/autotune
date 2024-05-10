@@ -1,3 +1,19 @@
+"""
+Copyright (c) 2024, 2024 Red Hat, IBM Corporation and others.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
 import csv
 import os
 import argparse
@@ -22,7 +38,6 @@ def find_max_exec_time(exec_file):
             time_elapsed = match.group(1)
             filtered_lines.append(time_elapsed)
 
-    print(filtered_lines)
     print(f"Execution time - {max(filtered_lines)}")
 
 def compute_max_avg(csv_file, column_name):
@@ -81,7 +96,6 @@ column_name = 'kruize_results'
 csv_file_path = find_file_with_value(directory_path, column_name, target_value_to_find)
 
 if csv_file_path:
-    print(f"Files containing '{target_value_to_find}' in '{column_name}' column:")
     print(csv_file_path)
 else:
     print(f"No files found containing '{target_value_to_find}' in '{column_name}' column.")
@@ -137,6 +151,5 @@ else:
     print("No valid values found in the specified column.")
 
 exec_time_log = directory_path + "/../exec_time.log"
-print(f"Execution time log - {exec_time_log}")
 find_max_exec_time(exec_time_log)
 
