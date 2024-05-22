@@ -111,7 +111,7 @@ if max_val is not None and avg_val is not None:
 
     print(f"Update Reco Latency Max / Avg value: {max_val} / {avg_val}")
 else:
-    print("No valid values found in the specified column.")
+    print(f"No valid values found in the specified column - {column_name_to_parse}")
 
 column_name_to_parse = 'updateResultsPerCall_success'
 max_val, avg_val = compute_max_avg(csv_file_path, column_name_to_parse)
@@ -120,7 +120,7 @@ if max_val is not None and avg_val is not None:
     avg_val = round(avg_val, 2)
     print(f"Update Results Latency Max / Avg value: {max_val} / {avg_val}")
 else:
-    print("No valid values found in the specified column.")
+    print(f"No valid values found in the specified column - {column_name_to_parse}")
 
 column_name_to_parse = 'loadResultsByExperimentName_sum_success'
 sum_max_val, sum_avg_val = compute_max_avg(csv_file_path, column_name_to_parse)
@@ -132,7 +132,7 @@ if count_max_val is not None and count_avg_val is not None and sum_max_val is no
     avg_val = round(sum_avg_val/count_avg_val, 2)
     print(f"LoadResultsByExpName Latency Max / Avg value: {max_val} / {avg_val}")
 else:
-    print("No valid values found in the specified column.")
+    print(f"No valid values found in the specified column - {column_name_to_parse}")
 
 column_name_to_parse = 'kruize_memory'
 max_val, avg_val = compute_max_avg(csv_file_path, column_name_to_parse)
@@ -140,7 +140,7 @@ max_val = round(max_val/1024/1024/1024, 2)
 if max_val is not None:
     print(f"Kruize memory Max value: {max_val} GB")
 else:
-    print("No valid values found in the specified column.")
+    print(f"No valid values found in the specified column - {column_name_to_parse}")
 
 column_name_to_parse = 'kruize_cpu_max'
 max_val, avg_val = compute_max_avg(csv_file_path, column_name_to_parse)
@@ -148,7 +148,7 @@ max_val = round(max_val, 2)
 if max_val is not None:
     print(f"Kruize cpu Max value: {max_val}")
 else:
-    print("No valid values found in the specified column.")
+    print(f"No valid values found in the specified column - {column_name_to_parse}")
 
 exec_time_log = directory_path + "/../exec_time.log"
 find_max_exec_time(exec_time_log)
