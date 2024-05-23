@@ -134,6 +134,18 @@ if count_max_val is not None and count_avg_val is not None and sum_max_val is no
 else:
     print(f"No valid values found in the specified column - {column_name_to_parse}")
 
+column_name_to_parse = 'generatePlots_sum_success'
+sum_max_val, sum_avg_val = compute_max_avg(csv_file_path, column_name_to_parse)
+
+column_name_to_parse = 'generatePlots_count_success'
+count_max_val, count_avg_val = compute_max_avg(csv_file_path, column_name_to_parse)
+if count_max_val is not None and count_avg_val is not None and sum_max_val is not None and sum_avg_val is not None:
+    max_val = round(sum_max_val/count_max_val, 2)
+    avg_val = round(sum_avg_val/count_avg_val, 2)
+    print(f"Generate Plots Latency Max / Avg value: {max_val} / {avg_val}")
+else:
+    print(f"No valid values found in the specified column - {column_name_to_parse}")
+
 column_name_to_parse = 'kruize_memory'
 max_val, avg_val = compute_max_avg(csv_file_path, column_name_to_parse)
 max_val = round(max_val/1024/1024/1024, 2)
