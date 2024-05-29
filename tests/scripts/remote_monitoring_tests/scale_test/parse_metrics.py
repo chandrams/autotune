@@ -17,7 +17,6 @@ limitations under the License.
 import csv
 import os
 import argparse
-import sys
 import re
 
 def find_max_exec_time(exec_file):
@@ -27,14 +26,12 @@ def find_max_exec_time(exec_file):
     with open(exec_file, "r") as file:
         lines = file.readlines()
 
-    pattern_found = False
     filtered_lines = []
 
     # Iterate through lines to find pattern match
     for line in lines:
         match = re.search(pattern, line)
         if match:
-            pattern_found = True
             time_elapsed = match.group(1)
             filtered_lines.append(time_elapsed)
 
