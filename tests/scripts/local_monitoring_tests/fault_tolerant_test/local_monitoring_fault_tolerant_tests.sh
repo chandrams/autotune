@@ -108,18 +108,18 @@ pushd ${KRUIZE_REPO} > /dev/null
 	MANIFESTS_FILE_BKUP="./manifests/crc/default-db-included-installation/${CLUSTER_TYPE}/kruize-crc-${CLUSTER_TYPE}.yaml.bkup"
 
 	cp ${MANIFESTS_FILE} ${MANIFESTS_FILE_BKUP}
-#	sed -i 's/"local": "false"/"local:" "true"/g' ${MANIFESTS_FILE}
+	sed -i 's/"local": "false"/"local": "true"/g' ${MANIFESTS_FILE}
         echo "./deploy.sh -c ${CLUSTER_TYPE} -i ${KRUIZE_IMAGE} -m ${target} -t >> ${KRUIZE_SETUP_LOG}" | tee -a ${LOG}
         ./deploy.sh -c ${CLUSTER_TYPE} -i ${KRUIZE_IMAGE} -m ${target} -t >> ${KRUIZE_SETUP_LOG} 2>&1
 
         sleep 20
         echo "./deploy.sh -c ${CLUSTER_TYPE} -i ${KRUIZE_IMAGE} -m ${target} >> ${KRUIZE_SETUP_LOG}" | tee -a ${LOG}
         ./deploy.sh -c ${CLUSTER_TYPE} -i ${KRUIZE_IMAGE} -m ${target} >> ${KRUIZE_SETUP_LOG} 2>&1
-        sleep 20
+        sleep 60
 
-	cat ${MANIFESTS_FILE}
-	cp ${MANIFESTS_FILE_BKUP} ${MANIFESTS_FILE}
-	rm ${MANIFESTS_FILE_BKUP}
+	#cat ${MANIFESTS_FILE}
+	#cp ${MANIFESTS_FILE_BKUP} ${MANIFESTS_FILE}
+	#rm ${MANIFESTS_FILE_BKUP}
 popd > /dev/null
 echo "Setting up kruize...Done" | tee -a ${LOG}
 
@@ -182,6 +182,9 @@ get_kruize_pod_log ${KRUIZE_POD_LOG_AFTER}
 end_time=$(get_date)
 elapsed_time=$(time_diff "${start_time}" "${end_time}")
 echo "Test took ${elapsed_time} seconds to complete" | tee -a ${LOG}
+
+cp ${MANIFESTS_FILE_BKUP} ${MANIFESTS_FILE}
+rm ${MANIFESTS_FILE_BKUP}
 
 if [ "${exit_code}" -ne 0 ]; then
 	echo "Local Monitoring Fault tolerant test failed! Check the log for details" | tee -a ${LOG}

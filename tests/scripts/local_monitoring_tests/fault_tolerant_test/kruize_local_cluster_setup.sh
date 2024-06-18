@@ -34,8 +34,8 @@ function deploy_tfb() {
 	echo "#######################################"
 	pushd benchmarks >/dev/null
 		echo "Installing TechEmpower (Quarkus REST EASY) benchmark into cluster"
-		pushd techempower >/dev/null
-			kubectl apply -f manifests -n ${namespace}
+		pushd techempower/manifests >/dev/null
+			kubectl apply -f default_manifests -n ${namespace}
 			check_err "ERROR: TechEmpower app failed to start, exiting"
 		popd >/dev/null
 	popd >/dev/null
@@ -110,6 +110,7 @@ function delete_repos() {
 
 
 CLUSTER_TYPE=$1
+rm -rf benchmarks
 clone_benchmarks
 
 deploy_tfb "default"

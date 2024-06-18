@@ -214,6 +214,20 @@ def create_performance_profile(perf_profile_json_file):
     print(response.text)
     return response
 
+# Description: This function creates a metric profile using the Kruize createMetricProfile API
+# Input Parameters: metric profile json
+def create_metric_profile(metric_profile_json_file):
+    json_file = open(metric_profile_json_file, "r")
+    metric_profile_json = json.loads(json_file.read())
+
+    print("\nCreating metric profile...")
+    url = URL + "/createMetricProfile"
+    print("URL = ", url)
+
+    response = requests.post(url, json=metric_profile_json)
+    print("Response status code = ", response.status_code)
+    print(response.text)
+    return response
 
 # Description: This function obtains the experiments from Kruize Autotune using listExperiments API
 # Input Parameters: None
@@ -332,7 +346,6 @@ def delete_metadata(input_json_file, invalid_header=False):
     print("Response status code = ", response.status_code)
     return response
 
-
 # Description: This function obtains the metadata from Kruize Autotune using GET dsmetadata API
 # Input Parameters: datasource name, cluster name, namespace, verbose - flag indicating granularity of data to be listed
 def list_metadata(datasource=None, cluster_name=None, namespace=None, verbose=None, logging=True):
@@ -363,4 +376,24 @@ def list_metadata(datasource=None, cluster_name=None, namespace=None, verbose=No
         print("\n************************************************************")
         print(response.text)
         print("\n************************************************************")
+
+# Description: This function generates recommendation for the given experiment_name
+def generate_recommendations(experiment_name):
+    print("\n************************************************************")
+    print("\nGenerating the recommendation \n for %s..." % (
+        experiment_name))
+    queryString = "?"
+    if experiment_name:
+        queryString = queryString + "&experiment_name=%s" % (experiment_name)
+    if endTime:
+        queryString = queryString + "&interval_end_time=%s" % (endTime)
+    if startTime:
+        queryString = queryString + "&interval_start_time=%s" % (startTime)
+
+    url = URL + "/generateRecommendations?%s" % (queryString)
+    print("URL = ", url)
+    response = requests.post(url, )
+    print("Response status code = ", response.status_code)
+    print(response.text)
+    print("\n************************************************************")
     return response

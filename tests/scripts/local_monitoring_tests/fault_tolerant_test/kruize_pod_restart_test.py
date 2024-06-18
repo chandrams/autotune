@@ -63,9 +63,9 @@ def main(argv):
         form_kruize_url(cluster_type, server_ip_addr)
         namespace = "openshift-tuning"
 
-    # Create the performance profile
+    # Create the metric profile
     perf_profile_json_file = "../json_files/resource_optimization_openshift.json"
-    create_performance_profile(perf_profile_json_file)
+    create_metric_profile(perf_profile_json_file)
 
     list_reco_json_dir = results_dir + "/list_reco_jsons"
     list_exp_json_dir = results_dir + "/list_exp_jsons"
