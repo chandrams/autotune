@@ -24,7 +24,7 @@
         <hibernatecore-version>6.1.7.Final</hibernatecore-version>
         <hibernatecp30-version>6.1.7.Final</hibernatecp30-version>
         <hibernate-Validator>8.0.1.Final</hibernate-Validator>
-        <micrometer-version>1.9.9</micrometer-version>
+        <micrometer-version>1.14.1</micrometer-version>
         <awssdk-version>2.25.35</awssdk-version>
     </properties>
     <dependencies>
