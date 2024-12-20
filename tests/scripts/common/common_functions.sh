@@ -46,7 +46,8 @@ TEST_SUITE_ARRAY=("app_autotune_yaml_tests"
 "kruize_layer_id_tests"
 "em_standalone_tests"
 "remote_monitoring_tests"
-"local_monitoring_tests")
+"local_monitoring_tests"
+"authentication_tests")
 
 modify_kruize_layer_tests=("add_new_tunable"
 "apply_null_tunable"
@@ -1904,6 +1905,7 @@ function kruize_local_patch() {
 
 #
 # "local" flag is turned off for RM.
+# Restores kruize default cpu/memory resources, PV storage for openshift
 #
 function kruize_remote_patch() {
 	CRC_DIR="./manifests/crc/default-db-included-installation"
@@ -1915,6 +1917,8 @@ function kruize_remote_patch() {
     sed -i 's/"local": "true"/"local": "false"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}
   elif [ ${cluster_type} == "openshift" ]; then
     sed -i 's/"local": "true"/"local": "false"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+    sed -i 's/\([[:space:]]*\)\(storage:\)[[:space:]]*[0-9]\+Mi/\1\2 1Gi/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+    sed -i 's/\([[:space:]]*\)\(memory:\)[[:space:]]*".*"/\1\2 "2Gi"/; s/\([[:space:]]*\)\(cpu:\)[[:space:]]*".*"/\1\2 "2"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
   fi
 }
 
