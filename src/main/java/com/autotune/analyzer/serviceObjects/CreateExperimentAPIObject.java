@@ -23,6 +23,7 @@ import com.autotune.analyzer.utils.ExperimentTypeUtil;
 import com.autotune.common.data.ValidationOutputData;
 import com.autotune.common.k8sObjects.TrialSettings;
 import com.autotune.utils.KruizeConstants;
+import com.google.gson.annotations.JsonAdapter;
 import com.google.gson.annotations.SerializedName;
 
 import java.util.List;
@@ -35,6 +36,8 @@ public class CreateExperimentAPIObject extends BaseSO implements ExperimentTypeA
     private String clusterName;
     @SerializedName(KruizeConstants.JSONKeys.PERFORMANCE_PROFILE)
     private String performanceProfile;
+    @SerializedName(KruizeConstants.JSONKeys.METADATA_PROFILE)
+    private String metadataProfile;
     @SerializedName("slo")
     private SloInfo sloInfo;
     @SerializedName(KruizeConstants.JSONKeys.MODE)
@@ -50,10 +53,14 @@ public class CreateExperimentAPIObject extends BaseSO implements ExperimentTypeA
     @SerializedName(KruizeConstants.JSONKeys.DATASOURCE) //TODO: to be used in future
     private String datasource;
     @SerializedName(KruizeConstants.JSONKeys.EXPERIMENT_TYPE) //TODO: to be used in future
-    private String experimentType;
+    @JsonAdapter(ExperimentTypeUtil.ExperimentTypeSerializer.class)
+    private AnalyzerConstants.ExperimentType experimentType;
     private AnalyzerConstants.ExperimentStatus status;
     private String experiment_id;   // this id is UUID and getting set at createExperiment API
     private ValidationOutputData validationData;  // This object indicates if this API object is valid or invalid
+
+    public CreateExperimentAPIObject() {
+    }
 
     public String getClusterName() {
         return clusterName;
@@ -70,6 +77,10 @@ public class CreateExperimentAPIObject extends BaseSO implements ExperimentTypeA
     public void setPerformanceProfile(String performanceProfile) {
         this.performanceProfile = performanceProfile;
     }
+
+    public String getMetadataProfile() { return metadataProfile; }
+
+    public void setMetadataProfile(String metadataProfile) { this.metadataProfile = metadataProfile; }
 
     public String getMode() {
         return mode;
@@ -151,13 +162,30 @@ public class CreateExperimentAPIObject extends BaseSO implements ExperimentTypeA
         this.datasource = datasource;
     }
 
-    @Override
-    public String getExperimentType() {
+    public AnalyzerConstants.ExperimentType getExperimentType() {
         return experimentType;
     }
 
-    public void setExperimentType(String experimentType) {
+    public void setExperimentType(AnalyzerConstants.ExperimentType experimentType) {
         this.experimentType = experimentType;
+    }
+
+    @Override
+    public String toString() {
+        return "CreateExperimentAPIObject{" +
+                "experimentName='" + getExperimentName() + '\'' +
+                "apiVersion='" + getApiVersion() + '\'' +
+                "clusterName='" + clusterName + '\'' +
+                ", performanceProfile='" + performanceProfile + '\'' +
+                ", metadataProfile='" + metadataProfile + '\'' +
+                ", sloInfo=" + sloInfo +
+                ", mode='" + mode + '\'' +
+                ", targetCluster='" + targetCluster + '\'' +
+                ", kubernetesAPIObjects=" + kubernetesAPIObjects.toString() +
+                ", trialSettings=" + trialSettings +
+                ", experimentType=" + experimentType +
+                ", recommendationSettings=" + recommendationSettings +
+                '}';
     }
 
     @Override
@@ -168,23 +196,6 @@ public class CreateExperimentAPIObject extends BaseSO implements ExperimentTypeA
     @Override
     public boolean isContainerExperiment() {
         return ExperimentTypeUtil.isContainerExperiment(experimentType);
-    }
-
-    @Override
-    public String toString() {
-        return "CreateExperimentAPIObject{" +
-                "experimentName='" + getExperimentName() + '\'' +
-                "apiVersion='" + getApiVersion() + '\'' +
-                "clusterName='" + clusterName + '\'' +
-                ", performanceProfile='" + performanceProfile + '\'' +
-                ", sloInfo=" + sloInfo +
-                ", mode='" + mode + '\'' +
-                ", targetCluster='" + targetCluster + '\'' +
-                ", kubernetesAPIObjects=" + kubernetesAPIObjects.toString() +
-                ", trialSettings=" + trialSettings +
-                ", experimentType=" + experimentType +
-                ", recommendationSettings=" + recommendationSettings +
-                '}';
     }
 }
 

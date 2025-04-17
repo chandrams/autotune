@@ -15,9 +15,11 @@
  *******************************************************************************/
 package com.autotune.analyzer.kruizeObject;
 
+import com.autotune.analyzer.exceptions.InvalidTermException;
 import com.autotune.analyzer.exceptions.InvalidValueException;
 import com.autotune.analyzer.recommendations.term.Terms;
 import com.autotune.analyzer.utils.AnalyzerConstants;
+import com.autotune.analyzer.utils.AnalyzerErrorConstants;
 import com.autotune.analyzer.utils.ExperimentTypeAware;
 import com.autotune.analyzer.utils.ExperimentTypeUtil;
 import com.autotune.common.data.ValidationOutputData;
@@ -26,6 +28,7 @@ import com.autotune.common.k8sObjects.TrialSettings;
 import com.autotune.utils.KruizeConstants;
 import com.autotune.utils.KruizeSupportedTypes;
 import com.autotune.utils.Utils;
+import com.google.gson.annotations.JsonAdapter;
 import com.google.gson.annotations.SerializedName;
 import io.fabric8.kubernetes.api.model.ObjectReference;
 
@@ -50,7 +53,10 @@ public final class KruizeObject implements ExperimentTypeAware {
     @SerializedName("datasource")
     private String datasource;
     @SerializedName(KruizeConstants.JSONKeys.EXPERIMENT_TYPE) //TODO: to be used in future
-    private String experimentType;
+    @JsonAdapter(ExperimentTypeUtil.ExperimentTypeSerializer.class)
+    private AnalyzerConstants.ExperimentType experimentType;
+    @SerializedName("default_updater")
+    private String defaultUpdater;
     private String namespace;               // TODO: Currently adding it at this level with an assumption that there is only one entry in k8s object needs to be changed
     private String mode;                    //Todo convert into Enum
     @SerializedName("target_cluster")
@@ -64,13 +70,15 @@ public final class KruizeObject implements ExperimentTypeAware {
     private AnalyzerConstants.ExperimentStatus status;
     @SerializedName("performance_profile")
     private String performanceProfile;
+    @SerializedName("metadata_profile")
+    private String metadataProfile;
     private TrialSettings trial_settings;
     private RecommendationSettings recommendation_settings;
     private ExperimentUseCaseType experiment_usecase_type;
     private ValidationOutputData validation_data;
     private List<K8sObject> kubernetes_objects;
     private Map<String, Terms> terms;
-
+    private transient String bulkJobId;
 
     public KruizeObject(String experimentName,
                         String clusterName,
@@ -80,6 +88,7 @@ public final class KruizeObject implements ExperimentTypeAware {
                         String hpoAlgoImpl,
                         SelectorInfo selectorInfo,
                         String performanceProfile,
+                        String metadataProfile,
                         String datasource,
                         ObjectReference objectReference
     ) throws InvalidValueException {
@@ -107,6 +116,7 @@ public final class KruizeObject implements ExperimentTypeAware {
             throw new InvalidValueException(error.toString());
         }
         this.performanceProfile = performanceProfile;
+        this.metadataProfile = metadataProfile;
         if (KruizeSupportedTypes.HPO_ALGOS_SUPPORTED.contains(hpoAlgoImpl))
             this.hpoAlgoImpl = hpoAlgoImpl;
         else
@@ -122,27 +132,86 @@ public final class KruizeObject implements ExperimentTypeAware {
      * Sets default terms for a KruizeObject.
      * This method initializes a map with predefined terms like "SHORT_TERM", "MEDIUM_TERM", and "LONG_TERM".
      * Each term is defined by a Terms object containing: Name of the term (e.g., "SHORT_TERM"), Duration (in days) to
-        be considered under that term, Threshold for the duration.
+     be considered under that term, Threshold for the duration.
      * Note: Currently, specific term names like "daily", "weekly", and "fortnightly" are not defined.
      * This method also requires implementing CustomResourceDefinition yaml for managing terms. This
-        functionality is not currently included.
+     functionality is not currently included.
      @param terms A map to store the default terms with term name as the key and Terms object as the value.
      @param kruizeObject The KruizeObject for which the default terms are being set.
      */
+
     public static void setDefaultTerms(Map<String, Terms> terms, KruizeObject kruizeObject) {
         // TODO: define term names like daily, weekly, fortnightly etc
         // TODO: add CRD for terms
-        terms.put(KruizeConstants.JSONKeys.SHORT_TERM, new Terms(KruizeConstants.JSONKeys.SHORT_TERM, KruizeConstants.RecommendationEngineConstants
-                .DurationBasedEngine.DurationAmount.SHORT_TERM_DURATION_DAYS, KruizeConstants.RecommendationEngineConstants
-                .DurationBasedEngine.DurationAmount.SHORT_TERM_DURATION_DAYS_THRESHOLD, 4, 0.25));
-        terms.put(KruizeConstants.JSONKeys.MEDIUM_TERM, new Terms(KruizeConstants.JSONKeys.MEDIUM_TERM, KruizeConstants
-                .RecommendationEngineConstants.DurationBasedEngine.DurationAmount.MEDIUM_TERM_DURATION_DAYS, KruizeConstants
-                .RecommendationEngineConstants.DurationBasedEngine.DurationAmount.MEDIUM_TERM_DURATION_DAYS_THRESHOLD, 7, 1));
-        terms.put(KruizeConstants.JSONKeys.LONG_TERM, new Terms(KruizeConstants.JSONKeys.LONG_TERM, KruizeConstants
-                .RecommendationEngineConstants.DurationBasedEngine.DurationAmount.LONG_TERM_DURATION_DAYS, KruizeConstants
-                .RecommendationEngineConstants.DurationBasedEngine.DurationAmount.LONG_TERM_DURATION_DAYS_THRESHOLD, 15, 1));
+        // for monitoring use case
+        terms.put(KruizeConstants.JSONKeys.SHORT_TERM, new Terms(KruizeConstants.JSONKeys.SHORT_TERM,
+                    KruizeConstants.RecommendationEngineConstants.DurationBasedEngine.DurationAmount.SHORT_TERM_DURATION_DAYS,
+                    getTermThresholdInDays(KruizeConstants.JSONKeys.SHORT_TERM, kruizeObject.getTrial_settings().getMeasurement_durationMinutes_inDouble()),
+                    4, 0.25));
+        terms.put(KruizeConstants.JSONKeys.MEDIUM_TERM, new Terms(KruizeConstants.JSONKeys.MEDIUM_TERM,
+                    KruizeConstants.RecommendationEngineConstants.DurationBasedEngine.DurationAmount.MEDIUM_TERM_DURATION_DAYS,
+                    getTermThresholdInDays(KruizeConstants.JSONKeys.MEDIUM_TERM, kruizeObject.getTrial_settings().getMeasurement_durationMinutes_inDouble()),
+                    7, 1));
+        terms.put(KruizeConstants.JSONKeys.LONG_TERM, new Terms(KruizeConstants.JSONKeys.LONG_TERM,
+                    KruizeConstants.RecommendationEngineConstants.DurationBasedEngine.DurationAmount.LONG_TERM_DURATION_DAYS,
+                    getTermThresholdInDays(KruizeConstants.JSONKeys.LONG_TERM, kruizeObject.getTrial_settings().getMeasurement_durationMinutes_inDouble()),
+                    15, 1));
+        kruizeObject.setTerms(terms);
+
+    }
+
+    public static void setDefaultTermsForAutoAndRecreate(Map<String, Terms> terms, KruizeObject kruizeObject) {
+        // for auto and recreate mode
+        // Default is Short Term
+        terms.put(KruizeConstants.JSONKeys.SHORT_TERM, new Terms(KruizeConstants.JSONKeys.SHORT_TERM,
+                KruizeConstants.RecommendationEngineConstants.DurationBasedEngine.DurationAmount.SHORT_TERM_DURATION_DAYS,
+                getTermThresholdInDays(KruizeConstants.JSONKeys.SHORT_TERM, kruizeObject.getTrial_settings().getMeasurement_durationMinutes_inDouble()),
+                4, 0.25));
 
         kruizeObject.setTerms(terms);
+    }
+
+    public static void setCustomTerms(Map<String, Terms> terms, KruizeObject kruizeObject) throws InvalidTermException {
+        // TODO: define term names like daily, weekly, fortnightly etc
+        // TODO: add CRD for terms
+
+        if (kruizeObject.getRecommendation_settings() != null && kruizeObject.getRecommendation_settings().getTermSettings() != null) {
+
+            List<String> termList = kruizeObject.getRecommendation_settings().getTermSettings().getTerms();
+
+            for (String userInputTerm : termList) {
+                if (KruizeConstants.JSONKeys.SHORT.equalsIgnoreCase(userInputTerm)) {
+                    terms.put(KruizeConstants.JSONKeys.SHORT_TERM, new Terms(KruizeConstants.JSONKeys.SHORT_TERM,
+                            KruizeConstants.RecommendationEngineConstants.DurationBasedEngine.DurationAmount.SHORT_TERM_DURATION_DAYS,
+                            getTermThresholdInDays(KruizeConstants.JSONKeys.SHORT_TERM, kruizeObject.getTrial_settings().getMeasurement_durationMinutes_inDouble()),
+                            4, 0.25));
+                } else if (KruizeConstants.JSONKeys.MEDIUM.equalsIgnoreCase(userInputTerm)) {
+                    terms.put(KruizeConstants.JSONKeys.MEDIUM_TERM, new Terms(KruizeConstants.JSONKeys.MEDIUM_TERM,
+                            KruizeConstants.RecommendationEngineConstants.DurationBasedEngine.DurationAmount.MEDIUM_TERM_DURATION_DAYS,
+                            getTermThresholdInDays(KruizeConstants.JSONKeys.MEDIUM_TERM, kruizeObject.getTrial_settings().getMeasurement_durationMinutes_inDouble()),
+                            7, 1));
+                } else if (KruizeConstants.JSONKeys.LONG.equalsIgnoreCase(userInputTerm)) {
+                    terms.put(KruizeConstants.JSONKeys.LONG_TERM, new Terms(KruizeConstants.JSONKeys.LONG_TERM,
+                            KruizeConstants.RecommendationEngineConstants.DurationBasedEngine.DurationAmount.LONG_TERM_DURATION_DAYS,
+                            getTermThresholdInDays(KruizeConstants.JSONKeys.LONG_TERM, kruizeObject.getTrial_settings().getMeasurement_durationMinutes_inDouble()),
+                            15, 1));
+                } else {
+                    throw new InvalidTermException(userInputTerm + AnalyzerErrorConstants.APIErrors.CreateExperimentAPI.INVALID_TERM_NAME);
+                }
+            }
+            kruizeObject.setTerms(terms);
+        } else {
+            // Handles the case where termSettings is null
+            throw new InvalidTermException(AnalyzerErrorConstants.APIErrors.CreateExperimentAPI.TERM_SETTINGS_UNDEFINED);
+        }
+    }
+
+    public String getBulkJobId() {
+        return bulkJobId;
+    }
+
+    public void setBulkJobId(String bulkJobId) {
+        this.bulkJobId = bulkJobId;
     }
 
     public String getExperimentName() {
@@ -301,24 +370,31 @@ public final class KruizeObject implements ExperimentTypeAware {
         this.datasource = datasource;
     }
 
-    @Override
-    public String getExperimentType() {
+    public AnalyzerConstants.ExperimentType getExperimentType() {
         return experimentType;
     }
 
-    public void setExperimentType(String experimentType) {
+    public void setExperimentType(AnalyzerConstants.ExperimentType experimentType) {
         this.experimentType = experimentType;
     }
 
-    @Override
-    public boolean isNamespaceExperiment() {
-        return ExperimentTypeUtil.isNamespaceExperiment(experimentType);
+
+    public String getDefaultUpdater() {
+        return defaultUpdater;
     }
 
-    @Override
-    public boolean isContainerExperiment() {
-        return ExperimentTypeUtil.isContainerExperiment(experimentType);
+    public void setDefaultUpdater(String defaultUpdater) {
+        this.defaultUpdater = defaultUpdater;
     }
+
+    public String getMetadataProfile() {
+        return metadataProfile;
+    }
+
+    public void setMetadataProfile(String metadataProfile) {
+        this.metadataProfile = metadataProfile;
+    }
+
 
     @Override
     public String toString() {
@@ -340,11 +416,41 @@ public final class KruizeObject implements ExperimentTypeAware {
                 ", objectReference=" + objectReference +
                 ", status=" + status +
                 ", performanceProfile='" + performanceProfile + '\'' +
+                ", metadataProfile='" + metadataProfile + '\'' +
                 ", trial_settings=" + trial_settings +
                 ", recommendation_settings=" + recommendation_settings +
                 ", experimentUseCaseType=" + experiment_usecase_type +
                 ", validationData=" + validation_data +
                 ", kubernetes_objects=" + kubernetes_objects +
                 '}';
+    }
+
+    @Override
+    public boolean isNamespaceExperiment() {
+        return ExperimentTypeUtil.isNamespaceExperiment(experimentType);
+    }
+
+    @Override
+    public boolean isContainerExperiment() {
+        return ExperimentTypeUtil.isContainerExperiment(experimentType);
+    }
+
+    private static double getTermThresholdInDays(String term, Double measurement_duration) {
+        double minDataPoints = 2;
+
+        switch (term) {
+            case KruizeConstants.JSONKeys.SHORT_TERM:
+                minDataPoints = KruizeConstants.RecommendationEngineConstants.DurationBasedEngine.DurationAmount.SHORT_TERM_MIN_DATAPOINTS;
+                break;
+            case KruizeConstants.JSONKeys.MEDIUM_TERM:
+                minDataPoints = KruizeConstants.RecommendationEngineConstants.DurationBasedEngine.DurationAmount.MEDIUM_TERM_MIN_DATAPOINTS;
+                break;
+            case KruizeConstants.JSONKeys.LONG_TERM:
+                minDataPoints = KruizeConstants.RecommendationEngineConstants.DurationBasedEngine.DurationAmount.LONG_TERM_MIN_DATAPOINTS;
+                break;
+        }
+
+        return ((double) measurement_duration * minDataPoints
+                / (KruizeConstants.TimeConv.NO_OF_HOURS_PER_DAY * KruizeConstants.TimeConv.NO_OF_MINUTES_PER_HOUR));
     }
 }

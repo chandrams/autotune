@@ -1,3 +1,105 @@
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: kruize-recommendation-updater
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - customresourcedefinitions
+    verbs:
+      - '*'
+  - apiGroups:
+      - apiextensions.k8s.io
+    resources:
+      - customresourcedefinitions
+    verbs:
+      - '*'
+  - apiGroups:
+      - autoscaling.k8s.io
+    resources:
+      - verticalpodautoscalers
+      - verticalpodautoscalers/status
+      - verticalpodautoscalercheckpoints
+    verbs:
+      - '*'
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - clusterrolebindings
+    verbs:
+      - '*'
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - "*"
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: kruize-recommendation-updater-crb
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kruize-recommendation-updater
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kruize-edit-ko
+rules:
+  - apiGroups: [ "apps" ]
+    resources: [ "deployments", "statefulsets", "daemonsets" ]
+    verbs: [ "get", "list", "patch", "update" ]
+  - apiGroups: [ "batch" ]
+    resources: [ "jobs" ]
+    verbs: [ "get", "list", "create", "delete" ]
+  - apiGroups: [ "" ]
+    resources: [ "namespaces" ]
+    verbs: [ "get", "list" ]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: instaslices-access
+rules:
+  - apiGroups: [ "inference.redhat.com" ]
+    resources: [ "instaslices" ]
+    verbs: [ "get", "list", "watch" ]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: instaslices-access-binding
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: instaslices-access
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kruize-edit-ko-binding
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: kruize-edit-ko
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
@@ -111,12 +213,14 @@ data:
       "savetodb": "true",
       "dbdriver": "jdbc:postgresql://",
       "plots": "true",
-      "local": "true",
       "logAllHttpReqAndResp": "true",
       "recommendationsURL" : "http://kruize.monitoring.svc.cluster.local:8080/generateRecommendations?experiment_name=%s",    
       "experimentsURL" : "http://kruize.monitoring.svc.cluster.local:8080/createExperiment",
       "experimentNameFormat" : "%datasource%|%clustername%|%namespace%|%workloadname%(%workloadtype%)|%containername%",
       "bulkapilimit" : 1000,
+      "isKafkaEnabled" : "false",
+      "isROSEnabled": "false",
+      "local": "true",
       "hibernate": {
         "dialect": "org.hibernate.dialect.PostgreSQLDialect",
         "driver": "org.postgresql.Driver",
@@ -181,7 +285,7 @@ spec:
               done
       containers:
         - name: kruize
-          image: quay.io/kruize/autotune_operator:0.2
+          image: quay.io/kruize/autotune_operator:0.5
           imagePullPolicy: Always
           volumeMounts:
             - name: config-volume
@@ -197,6 +301,14 @@ spec:
               value: "/etc/config/kruizeconfigjson"
             - name: JAVA_TOOL_OPTIONS
               value: "-XX:MaxRAMPercentage=80"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kruize-kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
+            - name: KAFKA_TOPICS
+              value: "recommendations-topic,error-topic,summary-topic"
+            - name: KAFKA_RESPONSE_FILTER_INCLUDE
+              value: "summary"
+            - name: KAFKA_RESPONSE_FILTER_EXCLUDE
+              value: ""
           ports:
             - name: kruize-port
               containerPort: 8080
@@ -246,7 +358,7 @@ spec:
         spec:
           containers:
             - name: kruizecronjob
-              image: quay.io/kruize/autotune_operator:0.2
+              image: quay.io/kruize/autotune_operator:0.5
               imagePullPolicy: Always
               volumeMounts:
                 - name: config-volume
@@ -372,7 +484,7 @@ spec:
         spec:
           containers:
             - name: kruizedeletejob
-              image: quay.io/kruize/autotune_operator:0.2
+              image: quay.io/kruize/autotune_operator:0.5
               imagePullPolicy: Always
               volumeMounts:
                 - name: config-volume

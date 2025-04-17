@@ -21,6 +21,7 @@ import com.autotune.analyzer.adapters.RecommendationItemAdapter;
 import com.autotune.analyzer.exceptions.InvalidConversionOfRecommendationEntryException;
 import com.autotune.analyzer.kruizeObject.KruizeObject;
 import com.autotune.analyzer.kruizeObject.SloInfo;
+import com.autotune.analyzer.metadataProfiles.MetadataProfile;
 import com.autotune.analyzer.performanceProfiles.PerformanceProfile;
 import com.autotune.analyzer.recommendations.ContainerRecommendations;
 import com.autotune.analyzer.recommendations.NamespaceRecommendations;
@@ -31,6 +32,7 @@ import com.autotune.analyzer.utils.AnalyzerErrorConstants;
 import com.autotune.analyzer.utils.GsonUTCDateAdapter;
 import com.autotune.common.auth.AuthenticationConfig;
 import com.autotune.common.data.dataSourceMetadata.*;
+import com.autotune.common.data.metrics.Metric;
 import com.autotune.common.data.result.ContainerData;
 import com.autotune.common.data.result.ExperimentResultData;
 import com.autotune.common.data.result.NamespaceData;
@@ -40,6 +42,9 @@ import com.autotune.common.datasource.DataSourceInfo;
 import com.autotune.common.datasource.DataSourceMetadataOperator;
 import com.autotune.common.k8sObjects.K8sObject;
 import com.autotune.database.table.*;
+import com.autotune.database.table.lm.KruizeLMExperimentEntry;
+import com.autotune.database.table.lm.KruizeLMMetadataProfileEntry;
+import com.autotune.database.table.lm.KruizeLMRecommendationEntry;
 import com.autotune.utils.KruizeConstants;
 import com.autotune.utils.Utils;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -58,6 +63,7 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 
 import static com.autotune.analyzer.experiment.ExperimentInitiator.getErrorMap;
+import static com.autotune.utils.KruizeConstants.KRUIZE_BULK_API.JOB_ID;
 
 /**
  * Helper functions used by the DB to create entity objects.
@@ -208,8 +214,6 @@ public class DBHelpers {
                             )
                     );
                 }
-
-
                 for (K8sObject k8sObject : kruizeObject.getKubernetes_objects()) {
                     if (null == kubernetesAPIObject.getName()) {
                         // namespace recommendations experiment type
@@ -275,6 +279,130 @@ public class DBHelpers {
         }
     }
 
+    /**
+     * Retrieves an existing DataSource from the DB entry or creates a new one if not found.
+     *
+     * @param kruizeMetadata         KruizeDSMetadataEntry object
+     * @param dataSourceMetadataInfo DataSourceMetadataInfo object
+     * @return The DataSource instance associated with the DB entry.
+     */
+    private static DataSource getOrCreateDataSourceFromDB(KruizeDSMetadataEntry kruizeMetadata, DataSourceMetadataInfo dataSourceMetadataInfo) {
+        String dataSourceName = kruizeMetadata.getDataSourceName();
+
+        // Check if the data source already exists
+        if (dataSourceMetadataInfo.getDatasources().containsKey(dataSourceName)) {
+            return dataSourceMetadataInfo.getDatasources().get(dataSourceName);
+        }
+
+        DataSource dataSource = new DataSource(dataSourceName, new HashMap<>());
+        dataSourceMetadataInfo.getDatasources().put(dataSourceName, dataSource);
+
+        return dataSource;
+    }
+
+    /**
+     * Retrieves an existing DataSourceCluster from the DB entry or creates a new one if not found.
+     *
+     * @param kruizeMetadata KruizeDSMetadataEntry object
+     * @param dataSource     DataSource object
+     * @return The DataSourceCluster instance associated with the DB entry
+     */
+    private static DataSourceCluster getOrCreateDataSourceClusterFromDB(KruizeDSMetadataEntry kruizeMetadata, DataSource dataSource) {
+        String clusterName = kruizeMetadata.getClusterName();
+
+        // Check if the cluster already exists in the DataSource
+        if (dataSource.getClusters().containsKey(clusterName)) {
+            return dataSource.getClusters().get(clusterName);
+        }
+
+        DataSourceCluster dataSourceCluster = new DataSourceCluster(clusterName, new HashMap<>());
+        dataSource.getClusters().put(clusterName, dataSourceCluster);
+
+        return dataSourceCluster;
+    }
+
+    /**
+     * Retrieves an existing DataSourceNamespace from the DB entry or creates a new one if not found.
+     *
+     * @param kruizeMetadata    KruizeDSMetadataEntry object
+     * @param dataSourceCluster DataSourceCluster object
+     * @return The DataSourceNamespace instance associated with the DB entry
+     */
+    private static DataSourceNamespace getOrCreateDataSourceNamespaceFromDB(KruizeDSMetadataEntry kruizeMetadata, DataSourceCluster dataSourceCluster) {
+        String namespaceName = kruizeMetadata.getNamespace();
+
+        // Check if the namespace already exists in the DataSourceCluster
+        if (dataSourceCluster.getNamespaces().containsKey(namespaceName)) {
+            return dataSourceCluster.getNamespaces().get(namespaceName);
+        }
+
+        DataSourceNamespace dataSourceNamespace = new DataSourceNamespace(namespaceName, new HashMap<>());
+        dataSourceCluster.getNamespaces().put(namespaceName, dataSourceNamespace);
+
+        return dataSourceNamespace;
+    }
+
+    /**
+     * Retrieves an existing DataSourceWorkload from the DB entry or creates a new one if not found.
+     *
+     * @param kruizeMetadata      KruizeDSMetadataEntry object
+     * @param dataSourceNamespace DataSourceNamespace object
+     * @return The DataSourceWorkload instance associated with the DB entry
+     */
+    private static DataSourceWorkload getOrCreateDataSourceWorkloadFromDB(KruizeDSMetadataEntry kruizeMetadata, DataSourceNamespace dataSourceNamespace) {
+        String workloadName = kruizeMetadata.getWorkloadName();
+
+        if (null == workloadName) {
+            return null;
+        }
+
+        // Check if the workload already exists in the DataSourceNamespace
+        if (dataSourceNamespace.getWorkloads().containsKey(workloadName)) {
+            return dataSourceNamespace.getWorkloads().get(workloadName);
+        }
+
+        DataSourceWorkload dataSourceWorkload = new DataSourceWorkload(workloadName, kruizeMetadata.getWorkloadType(), new HashMap<>());
+        dataSourceNamespace.getWorkloads().put(workloadName, dataSourceWorkload);
+
+        return dataSourceWorkload;
+    }
+
+    /**
+     * Retrieves an existing DataSourceContainer from the DB entry or creates a new one if not found.
+     *
+     * @param kruizeMetadata     KruizeDSMetadataEntry object
+     * @param dataSourceWorkload DataSourceWorkload object
+     * @return The DataSourceContainer instance associated with the DB entry
+     */
+    private static DataSourceContainer getOrCreateDataSourceContainerFromDB(KruizeDSMetadataEntry kruizeMetadata, DataSourceWorkload dataSourceWorkload) {
+        String containerName = kruizeMetadata.getContainerName();
+
+        if (null == containerName) {
+            return null;
+        }
+
+        // Check if the container already exists in the DataSourceWorkload
+        if (dataSourceWorkload.getContainers().containsKey(containerName)) {
+            return dataSourceWorkload.getContainers().get(containerName);
+        }
+
+        DataSourceContainer dataSourceContainer = new DataSourceContainer(containerName, kruizeMetadata.getContainerImageName());
+        dataSourceWorkload.getContainers().put(containerName, dataSourceContainer);
+
+        return dataSourceContainer;
+    }
+
+    private static KruizeDSMetadataEntry getMetadata(String datasource) {
+        DataSourceMetadataOperator dataSourceMetadataOperator = DataSourceMetadataOperator.getInstance();
+        HashMap<String, DataSourceInfo> dataSources = DataSourceCollection.getInstance().getDataSourcesCollection();
+        DataSourceMetadataInfo dataSourceMetadataInfo = dataSourceMetadataOperator.getDataSourceMetadataInfo(dataSources.get(datasource));
+        List<KruizeDSMetadataEntry> kruizeMetadataList = Converters.KruizeObjectConverters.convertDataSourceMetadataToMetadataObj(dataSourceMetadataInfo);
+        if (kruizeMetadataList.isEmpty())
+            return null;
+        else
+            return kruizeMetadataList.get(0);
+    }
+
     public static class Converters {
         private Converters() {
 
@@ -291,25 +419,26 @@ public class DBHelpers {
              * @return KruizeExperimentEntry
              * This methode facilitate to store data into db by accumulating required data from KruizeObject.
              */
-            public static KruizeExperimentEntry convertCreateAPIObjToExperimentDBObj(CreateExperimentAPIObject apiObject) {
-                KruizeExperimentEntry kruizeExperimentEntry = null;
+            public static KruizeLMExperimentEntry convertCreateAPIObjToExperimentDBObj(CreateExperimentAPIObject apiObject) {
+                KruizeLMExperimentEntry kruizeLMExperimentEntry = null;
                 try {
-                    kruizeExperimentEntry = new KruizeExperimentEntry();
-                    kruizeExperimentEntry.setExperiment_name(apiObject.getExperimentName());
-                    kruizeExperimentEntry.setExperiment_id(Utils.generateID(apiObject));
-                    kruizeExperimentEntry.setCluster_name(apiObject.getClusterName());
-                    kruizeExperimentEntry.setMode(apiObject.getMode());
-                    kruizeExperimentEntry.setPerformance_profile(apiObject.getPerformanceProfile());
-                    kruizeExperimentEntry.setVersion(apiObject.getApiVersion());
-                    kruizeExperimentEntry.setTarget_cluster(apiObject.getTargetCluster());
-                    kruizeExperimentEntry.setStatus(AnalyzerConstants.ExperimentStatus.IN_PROGRESS);
-                    kruizeExperimentEntry.setMeta_data(null);
-                    kruizeExperimentEntry.setDatasource(null);
-                    kruizeExperimentEntry.setExperimentType(apiObject.getExperimentType());
+                    kruizeLMExperimentEntry = new KruizeLMExperimentEntry();
+                    kruizeLMExperimentEntry.setExperiment_name(apiObject.getExperimentName());
+                    kruizeLMExperimentEntry.setExperiment_id(Utils.generateID(apiObject));
+                    kruizeLMExperimentEntry.setCluster_name(apiObject.getClusterName());
+                    kruizeLMExperimentEntry.setMode(apiObject.getMode());
+                    kruizeLMExperimentEntry.setPerformance_profile(apiObject.getPerformanceProfile());
+                    kruizeLMExperimentEntry.setMetadata_profile(apiObject.getMetadataProfile());
+                    kruizeLMExperimentEntry.setVersion(apiObject.getApiVersion());
+                    kruizeLMExperimentEntry.setTarget_cluster(apiObject.getTargetCluster());
+                    kruizeLMExperimentEntry.setStatus(AnalyzerConstants.ExperimentStatus.IN_PROGRESS);
+                    kruizeLMExperimentEntry.setMeta_data(null);
+                    kruizeLMExperimentEntry.setDatasource(null);
+                    kruizeLMExperimentEntry.setExperiment_type(apiObject.getExperimentType());
 
                     ObjectMapper objectMapper = new ObjectMapper();
                     try {
-                        kruizeExperimentEntry.setExtended_data(
+                        kruizeLMExperimentEntry.setExtended_data(
                                 objectMapper.readTree(
                                         new Gson().toJson(apiObject)
                                 )
@@ -318,11 +447,11 @@ public class DBHelpers {
                         throw new Exception("Error while creating Extended data due to : " + e.getMessage());
                     }
                 } catch (Exception e) {
-                    kruizeExperimentEntry = null;
+                    kruizeLMExperimentEntry = null;
                     LOGGER.error("Error while converting Kruize Object to experimentDetailTable due to {}", e.getMessage());
                     e.printStackTrace();
                 }
-                return kruizeExperimentEntry;
+                return kruizeLMExperimentEntry;
             }
 
             /**
@@ -373,102 +502,6 @@ public class DBHelpers {
                 return kruizeResultsEntry;
             }
 
-            public static ListRecommendationsAPIObject getListRecommendationAPIObjectForDB(KruizeObject kruizeObject, Timestamp monitoringEndTime) {
-                if (null == kruizeObject)
-                    return null;
-                if (null == monitoringEndTime)
-                    return null;
-                if (null == kruizeObject.getKubernetes_objects())
-                    return null;
-                if (kruizeObject.getKubernetes_objects().isEmpty())
-                    return null;
-                List<KubernetesAPIObject> kubernetesAPIObjectList = new ArrayList<>();
-                for (K8sObject k8sObject : kruizeObject.getKubernetes_objects()) {
-                    if (null == k8sObject)
-                        continue;
-                    if (null == k8sObject.getContainerDataMap() && kruizeObject.isContainerExperiment())
-                        continue;
-                    if (k8sObject.getContainerDataMap().isEmpty() && kruizeObject.isContainerExperiment())
-                        continue;
-                    KubernetesAPIObject kubernetesAPIObject = new KubernetesAPIObject(k8sObject.getName(), k8sObject.getType(), k8sObject.getNamespace());
-                    boolean matchFound = false;
-                    if (kruizeObject.isNamespaceExperiment()) {
-                        // saving namespace recommendations
-                        NamespaceData clonedNamespaceData = Utils.getClone(k8sObject.getNamespaceData(), NamespaceData.class);
-                        if (null == clonedNamespaceData)
-                            continue;
-                        if (null == clonedNamespaceData.getNamespaceRecommendations())
-                            continue;
-                        if (null == clonedNamespaceData.getNamespaceRecommendations().getData())
-                            continue;
-                        if (clonedNamespaceData.getNamespaceRecommendations().getData().isEmpty())
-                            continue;
-                        HashMap<Timestamp, MappedRecommendationForTimestamp> namespaceRecommendations = clonedNamespaceData.getNamespaceRecommendations().getData();
-                        if (null != monitoringEndTime && namespaceRecommendations.containsKey(monitoringEndTime)) {
-                            matchFound = true;
-                            NamespaceAPIObject namespaceAPIObject = null;
-                            List<Timestamp> tempList = new ArrayList<>();
-                            for (Timestamp timestamp : namespaceRecommendations.keySet()) {
-                                if (!timestamp.equals(monitoringEndTime))
-                                    tempList.add(timestamp);
-                            }
-                            for (Timestamp timestamp : tempList) {
-                                namespaceRecommendations.remove(timestamp);
-                            }
-                            clonedNamespaceData.getNamespaceRecommendations().setData(namespaceRecommendations);
-                            namespaceAPIObject = new NamespaceAPIObject(clonedNamespaceData.getNamespace_name(),
-                                    clonedNamespaceData.getNamespaceRecommendations(),
-                                    null);
-                            kubernetesAPIObject.setNamespaceAPIObject(namespaceAPIObject);
-                        }
-                    }
-
-                    List<ContainerAPIObject> containerAPIObjectList = new ArrayList<>();
-                    for (ContainerData containerData : k8sObject.getContainerDataMap().values()) {
-                        ContainerData clonedContainerData = Utils.getClone(containerData, ContainerData.class);
-                        if (null == clonedContainerData.getContainerRecommendations())
-                            continue;
-                        if (null == clonedContainerData.getContainerRecommendations().getData())
-                            continue;
-                        if (clonedContainerData.getContainerRecommendations().getData().isEmpty())
-                            continue;
-                        HashMap<Timestamp, MappedRecommendationForTimestamp> recommendations
-                                = clonedContainerData.getContainerRecommendations().getData();
-                        if (null != monitoringEndTime && recommendations.containsKey(monitoringEndTime)) {
-                            matchFound = true;
-                            ContainerAPIObject containerAPIObject = null;
-                            List<Timestamp> tempList = new ArrayList<>();
-                            for (Timestamp timestamp : recommendations.keySet()) {
-                                if (!timestamp.equals(monitoringEndTime))
-                                    tempList.add(timestamp);
-                            }
-                            for (Timestamp timestamp : tempList) {
-                                recommendations.remove(timestamp);
-                            }
-                            clonedContainerData.getContainerRecommendations().setData(recommendations);
-                            containerAPIObject = new ContainerAPIObject(clonedContainerData.getContainer_name(),
-                                    clonedContainerData.getContainer_image_name(),
-                                    clonedContainerData.getContainerRecommendations(),
-                                    null);
-                            containerAPIObjectList.add(containerAPIObject);
-                        }
-                    }
-                    kubernetesAPIObject.setContainerAPIObjects(containerAPIObjectList);
-                    if (matchFound) {
-                        kubernetesAPIObjectList.add(kubernetesAPIObject);
-                    }
-                }
-                ListRecommendationsAPIObject listRecommendationsAPIObject = null;
-                if (!kubernetesAPIObjectList.isEmpty()) {
-                    listRecommendationsAPIObject = new ListRecommendationsAPIObject();
-                    listRecommendationsAPIObject.setClusterName(kruizeObject.getClusterName());
-                    listRecommendationsAPIObject.setExperimentName(kruizeObject.getExperimentName());
-                    listRecommendationsAPIObject.setKubernetesObjects(kubernetesAPIObjectList);
-                    listRecommendationsAPIObject.setExperimentType(kruizeObject.getExperimentType());
-                }
-                return listRecommendationsAPIObject;
-            }
-
             public static KruizeRecommendationEntry convertKruizeObjectTORecommendation(KruizeObject kruizeObject, Timestamp monitoringEndTime) {
                 KruizeRecommendationEntry kruizeRecommendationEntry = null;
                 Boolean checkForTimestamp = false;
@@ -498,7 +531,7 @@ public class DBHelpers {
                     kruizeRecommendationEntry.setVersion(KruizeConstants.KRUIZE_RECOMMENDATION_API_VERSION.LATEST.getVersionNumber());
                     kruizeRecommendationEntry.setExperiment_name(listRecommendationsAPIObject.getExperimentName());
                     kruizeRecommendationEntry.setCluster_name(listRecommendationsAPIObject.getClusterName());
-                    kruizeRecommendationEntry.setExperimentType(listRecommendationsAPIObject.getExperimentType());
+                    //kruizeRecommendationEntry.setExperimentType(listRecommendationsAPIObject.getExperimentType());
 
                     Timestamp endInterval = null;
                     // todo : what happens if two k8 objects or Containers with different timestamp
@@ -535,18 +568,196 @@ public class DBHelpers {
                 return kruizeRecommendationEntry;
             }
 
-            public static List<CreateExperimentAPIObject> convertExperimentEntryToCreateExperimentAPIObject(List<KruizeExperimentEntry> entries) throws Exception {
+
+            public static KruizeLMRecommendationEntry convertKruizeObjectTOLMRecommendation(KruizeObject kruizeObject, Timestamp monitoringEndTime) {
+                KruizeLMRecommendationEntry kruizeRecommendationEntry = null;
+                Boolean checkForTimestamp = false;
+                Boolean getLatest = true;
+                Gson gson = new GsonBuilder()
+                        .disableHtmlEscaping()
+                        .setPrettyPrinting()
+                        .enableComplexMapKeySerialization()
+                        .setDateFormat(KruizeConstants.DateFormats.STANDARD_JSON_DATE_FORMAT)
+                        .registerTypeAdapter(Date.class, new GsonUTCDateAdapter())
+                        .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
+                        .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
+                        .create();
+                try {
+                    ListRecommendationsAPIObject listRecommendationsAPIObject = getListRecommendationAPIObjectForDB(
+                            kruizeObject, monitoringEndTime);
+                    if (null == listRecommendationsAPIObject) {
+                        return null;
+                    }
+                    LOGGER.debug(new GsonBuilder()
+                            .setPrettyPrinting()
+                            .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
+                            .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
+                            .create()
+                            .toJson(listRecommendationsAPIObject));
+                    kruizeRecommendationEntry = new KruizeLMRecommendationEntry();
+                    kruizeRecommendationEntry.setVersion(KruizeConstants.KRUIZE_RECOMMENDATION_API_VERSION.LATEST.getVersionNumber());
+                    kruizeRecommendationEntry.setExperiment_name(listRecommendationsAPIObject.getExperimentName());
+                    kruizeRecommendationEntry.setCluster_name(listRecommendationsAPIObject.getClusterName());
+                    kruizeRecommendationEntry.setExperimentType(kruizeObject.getExperimentType().name());
+
+                    Timestamp endInterval = null;
+                    // todo : what happens if two k8 objects or Containers with different timestamp
+                    for (KubernetesAPIObject k8sObject : listRecommendationsAPIObject.getKubernetesObjects()) {
+                        if (listRecommendationsAPIObject.isNamespaceExperiment()) {
+                            endInterval = k8sObject.getNamespaceAPIObjects().getnamespaceRecommendations().getData().keySet().stream().max(Timestamp::compareTo).get();
+                        } else {
+                            for (ContainerAPIObject containerAPIObject : k8sObject.getContainerAPIObjects()) {
+                                endInterval = containerAPIObject.getContainerRecommendations().getData().keySet().stream().max(Timestamp::compareTo).get();
+                                break;
+                            }
+                        }
+                    }
+                    kruizeRecommendationEntry.setInterval_end_time(endInterval);
+                    Map<String, Object> k8sObjectsMap = new HashMap<>();
+                    k8sObjectsMap.put(KruizeConstants.JSONKeys.KUBERNETES_OBJECTS, listRecommendationsAPIObject.getKubernetesObjects());
+                    if (null != kruizeObject.getBulkJobId())
+                        k8sObjectsMap.put(JOB_ID, kruizeObject.getBulkJobId());
+                    String k8sObjectString = gson.toJson(k8sObjectsMap);
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    DateFormat df = new SimpleDateFormat(KruizeConstants.DateFormats.STANDARD_JSON_DATE_FORMAT);
+                    objectMapper.setDateFormat(df);
+                    try {
+                        kruizeRecommendationEntry.setExtended_data(
+                                objectMapper.readTree(
+                                        k8sObjectString
+                                )
+                        );
+                    } catch (JsonProcessingException e) {
+                        throw new Exception("Error while creating Extended data due to : " + e.getMessage());
+                    }
+                } catch (Exception e) {
+                    kruizeRecommendationEntry = null;
+                    LOGGER.error("Error while converting KruizeObject to KruizeRecommendationEntry due to {}", e.getMessage());
+                    e.printStackTrace();
+                }
+                return kruizeRecommendationEntry;
+            }
+
+            public static ListRecommendationsAPIObject getListRecommendationAPIObjectForDB(KruizeObject kruizeObject, Timestamp monitoringEndTime) {
+                if (null == kruizeObject)
+                    return null;
+                if (null == monitoringEndTime)
+                    return null;
+                if (null == kruizeObject.getKubernetes_objects())
+                    return null;
+                if (kruizeObject.getKubernetes_objects().isEmpty())
+                    return null;
+                List<KubernetesAPIObject> kubernetesAPIObjectList = new ArrayList<>();
+                for (K8sObject k8sObject : kruizeObject.getKubernetes_objects()) {
+                    if (null == k8sObject)
+                        continue;
+                    if (null == k8sObject.getContainerDataMap() && kruizeObject.isContainerExperiment())
+                        continue;
+                    if (k8sObject.getContainerDataMap().isEmpty() && kruizeObject.isContainerExperiment())
+                        continue;
+                    KubernetesAPIObject kubernetesAPIObject = new KubernetesAPIObject(k8sObject.getName(), k8sObject.getType(), k8sObject.getNamespace());
+                    boolean matchFound = false;
+                    if (kruizeObject.isNamespaceExperiment()) {
+                        // saving namespace recommendations
+                        NamespaceData clonedNamespaceData = Utils.getClone(k8sObject.getNamespaceData(), NamespaceData.class);
+                        if (null == clonedNamespaceData)
+                            continue;
+                        if (null == clonedNamespaceData.getNamespaceRecommendations())
+                            continue;
+                        if (null == clonedNamespaceData.getNamespaceRecommendations().getData())
+                            continue;
+                        if (clonedNamespaceData.getNamespaceRecommendations().getData().isEmpty())
+                            continue;
+                        HashMap<Timestamp, MappedRecommendationForTimestamp> namespaceRecommendations = clonedNamespaceData.getNamespaceRecommendations().getData();
+
+                        if (null != monitoringEndTime && namespaceRecommendations.containsKey(monitoringEndTime)) {
+                            matchFound = true;
+                            NamespaceAPIObject namespaceAPIObject = null;
+                            List<Timestamp> tempList = new ArrayList<>();
+                            for (Timestamp timestamp : namespaceRecommendations.keySet()) {
+                                if (!timestamp.equals(monitoringEndTime))
+                                    tempList.add(timestamp);
+                            }
+                            for (Timestamp timestamp : tempList) {
+                                namespaceRecommendations.remove(timestamp);
+                            }
+                            clonedNamespaceData.getNamespaceRecommendations().setData(namespaceRecommendations);
+                            namespaceAPIObject = new NamespaceAPIObject(clonedNamespaceData.getNamespace_name(),
+                                    clonedNamespaceData.getNamespaceRecommendations(),
+                                    null);
+                            kubernetesAPIObject.setNamespaceAPIObject(namespaceAPIObject);
+                        }
+                    }
+
+                    List<ContainerAPIObject> containerAPIObjectList = new ArrayList<>();
+                    for (ContainerData containerData : k8sObject.getContainerDataMap().values()) {
+                        ContainerData clonedContainerData = Utils.getClone(containerData, ContainerData.class);
+                        if (null == clonedContainerData.getContainerRecommendations())
+                            continue;
+                        if (null == clonedContainerData.getContainerRecommendations().getData())
+                            continue;
+                        if (clonedContainerData.getContainerRecommendations().getData().isEmpty())
+                            continue;
+                        HashMap<Timestamp, MappedRecommendationForTimestamp> recommendations
+                                = clonedContainerData.getContainerRecommendations().getData();
+                        if (null != monitoringEndTime && !recommendations.containsKey(monitoringEndTime)) {
+                            try {
+                                Timestamp endInterval = containerData.getContainerRecommendations().getData().keySet().stream().max(Timestamp::compareTo).get();
+                                monitoringEndTime = endInterval;
+                            } catch (Exception e) {
+                                LOGGER.error("Error while converting ContainerData to Timestamp due to and not able to save date into recommendation table: " + e.getMessage());
+                            }
+                        }
+                        if (null != monitoringEndTime && recommendations.containsKey(monitoringEndTime)) {
+                            matchFound = true;
+                            ContainerAPIObject containerAPIObject = null;
+                            List<Timestamp> tempList = new ArrayList<>();
+                            for (Timestamp timestamp : recommendations.keySet()) {
+                                if (!timestamp.equals(monitoringEndTime))
+                                    tempList.add(timestamp);
+                            }
+                            for (Timestamp timestamp : tempList) {
+                                recommendations.remove(timestamp);
+                            }
+                            clonedContainerData.getContainerRecommendations().setData(recommendations);
+                            containerAPIObject = new ContainerAPIObject(clonedContainerData.getContainer_name(),
+                                    clonedContainerData.getContainer_image_name(),
+                                    clonedContainerData.getContainerRecommendations(),
+                                    null);
+                            containerAPIObjectList.add(containerAPIObject);
+                        }
+                    }
+                    kubernetesAPIObject.setContainerAPIObjects(containerAPIObjectList);
+                    if (matchFound) {
+                        kubernetesAPIObjectList.add(kubernetesAPIObject);
+                    }
+                }
+                ListRecommendationsAPIObject listRecommendationsAPIObject = null;
+                if (!kubernetesAPIObjectList.isEmpty()) {
+                    listRecommendationsAPIObject = new ListRecommendationsAPIObject();
+                    listRecommendationsAPIObject.setClusterName(kruizeObject.getClusterName());
+                    listRecommendationsAPIObject.setExperimentName(kruizeObject.getExperimentName());
+                    listRecommendationsAPIObject.setKubernetesObjects(kubernetesAPIObjectList);
+                    listRecommendationsAPIObject.setExperimentType(kruizeObject.getExperimentType());
+                }
+                return listRecommendationsAPIObject;
+            }
+
+
+            public static List<CreateExperimentAPIObject> convertLMExperimentEntryToCreateExperimentAPIObject(List<KruizeLMExperimentEntry> entries) throws Exception {
                 List<CreateExperimentAPIObject> createExperimentAPIObjects = new ArrayList<>();
                 int failureThreshHold = entries.size();
                 int failureCount = 0;
-                for (KruizeExperimentEntry entry : entries) {
+                for (KruizeLMExperimentEntry entry : entries) {
                     try {
                         JsonNode extended_data = entry.getExtended_data();
                         String extended_data_rawJson = extended_data.toString();
                         CreateExperimentAPIObject apiObj = new Gson().fromJson(extended_data_rawJson, CreateExperimentAPIObject.class);
                         apiObj.setExperiment_id(entry.getExperiment_id());
                         apiObj.setStatus(entry.getStatus());
-                        apiObj.setExperimentType(entry.getExperimentType());
+                        apiObj.setTargetCluster(entry.getTarget_cluster());
+                        apiObj.setMode(entry.getMode());
+                        apiObj.setExperimentType(entry.getExperiment_type());
                         createExperimentAPIObjects.add(apiObj);
                     } catch (Exception e) {
                         LOGGER.error("Error in converting to apiObj from db object due to : {}", e.getMessage());
@@ -559,6 +770,31 @@ public class DBHelpers {
 
                 return createExperimentAPIObjects;
             }
+
+            public static List<CreateExperimentAPIObject> convertExperimentEntryToCreateExperimentAPIObject(List<KruizeExperimentEntry> entries) throws Exception {
+                List<CreateExperimentAPIObject> createExperimentAPIObjects = new ArrayList<>();
+                int failureThreshHold = entries.size();
+                int failureCount = 0;
+                for (KruizeExperimentEntry entry : entries) {
+                    try {
+                        JsonNode extended_data = entry.getExtended_data();
+                        String extended_data_rawJson = extended_data.toString();
+                        CreateExperimentAPIObject apiObj = new Gson().fromJson(extended_data_rawJson, CreateExperimentAPIObject.class);
+                        apiObj.setExperiment_id(entry.getExperiment_id());
+                        apiObj.setStatus(entry.getStatus());
+                        createExperimentAPIObjects.add(apiObj);
+                    } catch (Exception e) {
+                        LOGGER.error("Error in converting to apiObj from db object due to : {}", e.getMessage());
+                        LOGGER.error(entry.toString());
+                        failureCount++;
+                    }
+                }
+                if (failureThreshHold > 0 && failureCount == failureThreshHold)
+                    throw new Exception("None of the experiments are able to load from DB.");
+
+                return createExperimentAPIObjects;
+            }
+
 
             public static List<UpdateResultsAPIObject> convertResultEntryToUpdateResultsAPIObject(List<KruizeResultsEntry> kruizeResultsEntries) {
                 ObjectMapper mapper = new ObjectMapper();
@@ -697,6 +933,74 @@ public class DBHelpers {
                 return listRecommendationsAPIObjectList;
             }
 
+            public static List<ListRecommendationsAPIObject> convertLMRecommendationEntryToRecommendationAPIObject(
+                    List<KruizeLMRecommendationEntry> kruizeRecommendationEntryList) throws InvalidConversionOfRecommendationEntryException {
+                if (null == kruizeRecommendationEntryList)
+                    return null;
+                if (kruizeRecommendationEntryList.size() == 0)
+                    return null;
+                Gson gson = new GsonBuilder()
+                        .disableHtmlEscaping()
+                        .setPrettyPrinting()
+                        .enableComplexMapKeySerialization()
+                        .setDateFormat(KruizeConstants.DateFormats.STANDARD_JSON_DATE_FORMAT)
+                        .registerTypeAdapter(Date.class, new GsonUTCDateAdapter())
+                        .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
+                        .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
+                        .create();
+                List<ListRecommendationsAPIObject> listRecommendationsAPIObjectList = new ArrayList<>();
+                for (KruizeLMRecommendationEntry kruizeRecommendationEntry : kruizeRecommendationEntryList) {
+                    // Check if instance of KruizeRecommendationEntry is null
+                    if (null == kruizeRecommendationEntry) {
+                        // Throw an exception stating it cannot be null
+                        throw new InvalidConversionOfRecommendationEntryException(
+                                String.format(
+                                        AnalyzerErrorConstants.ConversionErrors.KruizeRecommendationError.NOT_NULL,
+                                        KruizeRecommendationEntry.class.getSimpleName()
+                                )
+                        );
+                    }
+                    // Create an Object Mapper to extract value from JSON Node
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    DateFormat df = new SimpleDateFormat(KruizeConstants.DateFormats.STANDARD_JSON_DATE_FORMAT);
+                    objectMapper.setDateFormat(df);
+                    // Create a holder for recommendation object to save the result from object mapper
+                    ListRecommendationsAPIObject listRecommendationsAPIObject = null;
+                    JsonNode extendedData = kruizeRecommendationEntry.getExtended_data().get(KruizeConstants.JSONKeys.KUBERNETES_OBJECTS);
+                    if (null == extendedData)
+                        continue;
+                    try {
+                        // If successful, the object mapper returns the list recommendation API Object
+                        List<KubernetesAPIObject> kubernetesAPIObjectList = new ArrayList<>();
+                        if (extendedData.isArray()) {
+                            for (JsonNode node : extendedData) {
+                                KubernetesAPIObject kubernetesAPIObject = gson.fromJson(objectMapper.writeValueAsString(node), KubernetesAPIObject.class);
+                                if (null != kubernetesAPIObject) {
+                                    kubernetesAPIObjectList.add(kubernetesAPIObject);
+                                } else {
+                                    LOGGER.debug("GSON failed to convert the DB Json object in convertRecommendationEntryToRecommendationAPIObject");
+                                }
+                            }
+                        }
+                        if (null != kubernetesAPIObjectList) {
+                            listRecommendationsAPIObject = new ListRecommendationsAPIObject();
+                            listRecommendationsAPIObject.setApiVersion(kruizeRecommendationEntry.getVersion());
+                            listRecommendationsAPIObject.setKubernetesObjects(kubernetesAPIObjectList);
+                            listRecommendationsAPIObject.setExperimentName(kruizeRecommendationEntry.getExperiment_name());
+                            listRecommendationsAPIObject.setClusterName(kruizeRecommendationEntry.getCluster_name());
+                        }
+                    } catch (JsonProcessingException e) {
+                        e.printStackTrace();
+                        LOGGER.debug(e.getMessage());
+                    }
+                    if (null != listRecommendationsAPIObject)
+                        listRecommendationsAPIObjectList.add(listRecommendationsAPIObject);
+                }
+                if (listRecommendationsAPIObjectList.isEmpty())
+                    return null;
+                return listRecommendationsAPIObjectList;
+            }
+
             public static KruizePerformanceProfileEntry convertPerfProfileObjToPerfProfileDBObj(PerformanceProfile performanceProfile) {
                 KruizePerformanceProfileEntry kruizePerformanceProfileEntry = null;
                 try {
@@ -745,6 +1049,7 @@ public class DBHelpers {
 
             /**
              * converts MetricProfile object to KruizeMetricProfileEntry table object
+             *
              * @param metricProfile metricProfile object to be converted
              * @return KruizeMetricProfileEntry table object
              */
@@ -782,6 +1087,7 @@ public class DBHelpers {
 
             /**
              * converts KruizeMetricProfileEntry table objects to MetricProfile objects
+             *
              * @param kruizeMetricProfileEntryList List of KruizeMetricProfileEntry table objects to be converted
              * @return List containing the MetricProfile objects
              * @throws Exception
@@ -814,6 +1120,7 @@ public class DBHelpers {
 
             /**
              * converts KruizeDataSourceEntry table objects to DataSourceInfo objects
+             *
              * @param kruizeDataSourceList List containing the KruizeDataSourceEntry table objects
              * @return List containing the DataSourceInfo objects
              */
@@ -825,24 +1132,28 @@ public class DBHelpers {
                     try {
                         DataSourceInfo dataSourceInfo;
                         AuthenticationConfig authConfig = null;
+                        JSONObject authJson = null;
                         if (kruizeDataSource.getKruizeAuthenticationEntry() != null) {
                             try {
                                 JsonNode credentialsNode = kruizeDataSource.getKruizeAuthenticationEntry().getCredentials();
                                 String authType = kruizeDataSource.getKruizeAuthenticationEntry().getAuthenticationType();
                                 // Parse the JsonNode credentials into a JSONObject
-                                JSONObject credentialsJson = new JSONObject(credentialsNode.toString());
-                                JSONObject authJson = new JSONObject()
-                                        .put(KruizeConstants.AuthenticationConstants.AUTHENTICATION_TYPE, authType)
-                                        .put(KruizeConstants.AuthenticationConstants.AUTHENTICATION_CREDENTIALS, credentialsJson);
+                                if (!credentialsNode.toString().equalsIgnoreCase(AnalyzerConstants.NULL)) {
+                                    JSONObject credentialsJson = new JSONObject(credentialsNode.toString());
+                                    authJson = new JSONObject()
+                                            .put(KruizeConstants.AuthenticationConstants.AUTHENTICATION_TYPE, authType)
+                                            .put(KruizeConstants.AuthenticationConstants.AUTHENTICATION_CREDENTIALS, credentialsJson);
+                                }
                                 authConfig = AuthenticationConfig.createAuthenticationConfigObject(authJson);
                             } catch (Exception e) {
-                                LOGGER.debug("GSON failed to convert the DB Json object in convertKruizeDataSourceToDataSourceObject");
+                                e.printStackTrace();
+                                LOGGER.error("GSON failed to convert the DB Json object in convertKruizeDataSourceToDataSourceObject");
                             }
                         }
                         if (kruizeDataSource.getServiceName().isEmpty() && null != kruizeDataSource.getUrl()) {
                             dataSourceInfo = new DataSourceInfo(kruizeDataSource.getName(), kruizeDataSource
                                     .getProvider(), null, null, new URL(kruizeDataSource.getUrl()), authConfig);
-                        } else{
+                        } else {
                             dataSourceInfo = new DataSourceInfo(kruizeDataSource.getName(), kruizeDataSource
                                     .getProvider(), kruizeDataSource.getServiceName(), kruizeDataSource.getNamespace(), null, authConfig);
                         }
@@ -861,6 +1172,7 @@ public class DBHelpers {
 
             /**
              * converts DataSourceInfo objects to KruizeDataSourceEntry table objects
+             *
              * @param dataSourceInfo DataSourceInfo objects
              * @return KruizeDataSourceEntry table object
              */
@@ -885,7 +1197,8 @@ public class DBHelpers {
 
             /**
              * converts DataSourceMetadataInfo objects to KruizeDSMetadataEntry table objects
-             * @param kruizeMetadataList    List of KruizeDSMetadataEntry objects
+             *
+             * @param kruizeMetadataList List of KruizeDSMetadataEntry objects
              * @return DataSourceMetadataInfo object
              * @throws Exception
              */
@@ -904,20 +1217,20 @@ public class DBHelpers {
                         DataSourceContainer dataSourceContainer = getOrCreateDataSourceContainerFromDB(kruizeMetadata, dataSourceWorkload);
 
                         // Update DataSourceMetadataInfo with the DataSource, DataSourceCluster, DataSourceNamespace, DataSourceWorkload, and DataSourceContainer
-                        dataSourceMetadataInfo.getDataSourceHashMap().put(kruizeMetadata.getDataSourceName(), dataSource);
-                        dataSource.getDataSourceClusterHashMap().put(kruizeMetadata.getClusterName(), dataSourceCluster);
-                        dataSourceCluster.getDataSourceNamespaceHashMap().put(kruizeMetadata.getNamespace(), dataSourceNamespace);
+                        dataSourceMetadataInfo.getDatasources().put(kruizeMetadata.getDataSourceName(), dataSource);
+                        dataSource.getClusters().put(kruizeMetadata.getClusterName(), dataSourceCluster);
+                        dataSourceCluster.getNamespaces().put(kruizeMetadata.getNamespace(), dataSourceNamespace);
                         if (null == dataSourceWorkload) {
-                            dataSourceNamespace.setDataSourceWorkloadHashMap(null);
+                            dataSourceNamespace.setWorkloads(null);
                             continue;
                         }
-                        dataSourceNamespace.getDataSourceWorkloadHashMap().put(kruizeMetadata.getWorkloadName(), dataSourceWorkload);
+                        dataSourceNamespace.getWorkloads().put(kruizeMetadata.getWorkloadName(), dataSourceWorkload);
 
                         if (null == dataSourceContainer) {
-                            dataSourceWorkload.setDataSourceContainerHashMap(null);
+                            dataSourceWorkload.setContainers(null);
                             continue;
                         }
-                        dataSourceWorkload.getDataSourceContainerHashMap().put(kruizeMetadata.getContainerName(), dataSourceContainer);
+                        dataSourceWorkload.getContainers().put(kruizeMetadata.getContainerName(), dataSourceContainer);
                     } catch (Exception e) {
                         LOGGER.error("Error occurred while converting to dataSourceMetadataInfo from DB object : {}", e.getMessage());
                         LOGGER.error(e.getMessage());
@@ -933,7 +1246,8 @@ public class DBHelpers {
 
             /**
              * Converts KruizeDSMetadataEntry table objects to DataSourceMetadataInfo with only cluster-level metadata
-             * @param kruizeMetadataList    KruizeDSMetadataEntry objects
+             *
+             * @param kruizeMetadataList KruizeDSMetadataEntry objects
              * @return DataSourceMetadataInfo object with only cluster-level metadata
              * @throws Exception
              */
@@ -949,13 +1263,13 @@ public class DBHelpers {
                     try {
                         DataSource dataSource = getOrCreateDataSourceFromDB(kruizeMetadata, dataSourceMetadataInfo);
                         DataSourceCluster dataSourceCluster = getOrCreateDataSourceClusterFromDB(kruizeMetadata, dataSource);
-                        dataSourceCluster.setDataSourceNamespaceHashMap(null);
+                        dataSourceCluster.setNamespaces(null);
 
                         // Update DataSourceMetadataInfo with the DataSource and DataSourceCluster
-                        dataSourceMetadataInfo.getDataSourceHashMap()
+                        dataSourceMetadataInfo.getDatasources()
                                 .put(kruizeMetadata.getDataSourceName(), dataSource);
 
-                        dataSource.getDataSourceClusterHashMap()
+                        dataSource.getClusters()
                                 .put(kruizeMetadata.getClusterName(), dataSourceCluster);
 
                     } catch (Exception e) {
@@ -974,8 +1288,9 @@ public class DBHelpers {
 
             /**
              * Converts KruizeDSMetadataEntry table objects to DataSourceMetadataInfo with only namespace-level metadata
-             * @param kruizeMetadataList    List of KruizeDSMetadataEntry objects
-             * @return  DataSourceMetadataInfo with only namespace-level metadata
+             *
+             * @param kruizeMetadataList List of KruizeDSMetadataEntry objects
+             * @return DataSourceMetadataInfo with only namespace-level metadata
              * @throws Exception
              */
             public static List<DataSourceMetadataInfo> convertKruizeMetadataToNamespaceLevelDataSourceMetadata(List<KruizeDSMetadataEntry> kruizeMetadataList) throws Exception {
@@ -991,16 +1306,16 @@ public class DBHelpers {
                         DataSource dataSource = getOrCreateDataSourceFromDB(kruizeMetadata, dataSourceMetadataInfo);
                         DataSourceCluster dataSourceCluster = getOrCreateDataSourceClusterFromDB(kruizeMetadata, dataSource);
                         DataSourceNamespace dataSourceNamespace = getOrCreateDataSourceNamespaceFromDB(kruizeMetadata, dataSourceCluster);
-                        dataSourceNamespace.setDataSourceWorkloadHashMap(null);
+                        dataSourceNamespace.setWorkloads(null);
 
                         // Update DataSourceMetadataInfo with the DataSource and DataSourceCluster
-                        dataSourceMetadataInfo.getDataSourceHashMap()
+                        dataSourceMetadataInfo.getDatasources()
                                 .put(kruizeMetadata.getDataSourceName(), dataSource);
 
-                        dataSource.getDataSourceClusterHashMap()
+                        dataSource.getClusters()
                                 .put(kruizeMetadata.getClusterName(), dataSourceCluster);
 
-                        dataSourceCluster.getDataSourceNamespaceHashMap()
+                        dataSourceCluster.getNamespaces()
                                 .put(kruizeMetadata.getNamespace(), dataSourceNamespace);
 
                     } catch (Exception e) {
@@ -1019,6 +1334,7 @@ public class DBHelpers {
 
             /**
              * Converts DataSourceMetadataInfo object to KruizeDSMetadataEntry objects
+             *
              * @param dataSourceMetadataInfo DataSourceMetadataInfo object
              * @return List of KruizeDSMetadataEntry objects
              */
@@ -1026,16 +1342,16 @@ public class DBHelpers {
                 List<KruizeDSMetadataEntry> kruizeMetadataList = new ArrayList<>();
                 try {
 
-                    for (DataSource dataSource : dataSourceMetadataInfo.getDataSourceHashMap().values()) {
+                    for (DataSource dataSource : dataSourceMetadataInfo.getDatasources().values()) {
                         String dataSourceName = dataSource.getDataSourceName();
 
-                        for (DataSourceCluster dataSourceCluster : dataSource.getDataSourceClusterHashMap().values()) {
+                        for (DataSourceCluster dataSourceCluster : dataSource.getClusters().values()) {
                             String dataSourceClusterName = dataSourceCluster.getDataSourceClusterName();
 
-                            for (DataSourceNamespace dataSourceNamespace : dataSourceCluster.getDataSourceNamespaceHashMap().values()) {
-                                String namespaceName = dataSourceNamespace.getDataSourceNamespaceName();
+                            for (DataSourceNamespace dataSourceNamespace : dataSourceCluster.getNamespaces().values()) {
+                                String namespaceName = dataSourceNamespace.getNamespace();
 
-                                if (null == dataSourceNamespace.getDataSourceWorkloadHashMap()) {
+                                if (null == dataSourceNamespace.getWorkloads()) {
                                     KruizeDSMetadataEntry kruizeMetadata = new KruizeDSMetadataEntry();
                                     kruizeMetadata.setVersion(KruizeConstants.DataSourceConstants.DataSourceMetadataInfoConstants.version);
                                     kruizeMetadata.setDataSourceName(dataSourceName);
@@ -1049,17 +1365,17 @@ public class DBHelpers {
                                     continue;
                                 }
 
-                                for (DataSourceWorkload dataSourceWorkload : dataSourceNamespace.getDataSourceWorkloadHashMap().values()) {
+                                for (DataSourceWorkload dataSourceWorkload : dataSourceNamespace.getWorkloads().values()) {
                                     // handles 'job' workload type with no containers
-                                    if(null == dataSourceWorkload.getDataSourceContainerHashMap()) {
+                                    if (null == dataSourceWorkload.getContainers()) {
                                         KruizeDSMetadataEntry kruizeMetadata = new KruizeDSMetadataEntry();
                                         kruizeMetadata.setVersion(KruizeConstants.DataSourceConstants.DataSourceMetadataInfoConstants.version);
 
                                         kruizeMetadata.setDataSourceName(dataSourceName);
                                         kruizeMetadata.setClusterName(dataSourceClusterName);
                                         kruizeMetadata.setNamespace(namespaceName);
-                                        kruizeMetadata.setWorkloadType(dataSourceWorkload.getDataSourceWorkloadType());
-                                        kruizeMetadata.setWorkloadName(dataSourceWorkload.getDataSourceWorkloadName());
+                                        kruizeMetadata.setWorkloadType(dataSourceWorkload.getWorkloadType());
+                                        kruizeMetadata.setWorkloadName(dataSourceWorkload.getWorkloadName());
 
                                         kruizeMetadata.setContainerName(null);
                                         kruizeMetadata.setContainerImageName(null);
@@ -1068,18 +1384,18 @@ public class DBHelpers {
                                         continue;
                                     }
 
-                                    for (DataSourceContainer dataSourceContainer : dataSourceWorkload.getDataSourceContainerHashMap().values()) {
+                                    for (DataSourceContainer dataSourceContainer : dataSourceWorkload.getContainers().values()) {
                                         KruizeDSMetadataEntry kruizeMetadata = new KruizeDSMetadataEntry();
                                         kruizeMetadata.setVersion(KruizeConstants.DataSourceConstants.DataSourceMetadataInfoConstants.version);
 
                                         kruizeMetadata.setDataSourceName(dataSourceName);
                                         kruizeMetadata.setClusterName(dataSourceClusterName);
                                         kruizeMetadata.setNamespace(namespaceName);
-                                        kruizeMetadata.setWorkloadType(dataSourceWorkload.getDataSourceWorkloadType());
-                                        kruizeMetadata.setWorkloadName(dataSourceWorkload.getDataSourceWorkloadName());
+                                        kruizeMetadata.setWorkloadType(dataSourceWorkload.getWorkloadType());
+                                        kruizeMetadata.setWorkloadName(dataSourceWorkload.getWorkloadName());
 
-                                        kruizeMetadata.setContainerName(dataSourceContainer.getDataSourceContainerName());
-                                        kruizeMetadata.setContainerImageName(dataSourceContainer.getDataSourceContainerImageName());
+                                        kruizeMetadata.setContainerName(dataSourceContainer.getContainerName());
+                                        kruizeMetadata.setContainerImageName(dataSourceContainer.getContainerImageName());
 
                                         kruizeMetadataList.add(kruizeMetadata);
                                     }
@@ -1117,126 +1433,86 @@ public class DBHelpers {
                 }
                 return kruizeAuthenticationEntry;
             }
+
+            /**
+             * Converts List of KruizeLMMetadataProfileEntry DB objects to List of MetadataProfile objects
+             *
+             * @param kruizeMetadataProfileEntryList List of KruizeLMMetadataProfileEntry DB objects
+             * @return List of MetadataProfile objects
+             */
+            public static List<MetadataProfile> convertMetadataProfileEntryToMetadataProfileObject(List<KruizeLMMetadataProfileEntry> kruizeMetadataProfileEntryList) throws Exception {
+                List<MetadataProfile> metadataProfiles = new ArrayList<>();
+                int failureThreshHold = kruizeMetadataProfileEntryList.size();
+                int failureCount = 0;
+                for (KruizeLMMetadataProfileEntry entry : kruizeMetadataProfileEntryList) {
+                    try {
+                        JsonNode metadata = entry.getMetadata();
+                        JsonNode query_variables = entry.getQuery_variables();
+                        ArrayList<Metric> queryVariablesList = new ArrayList<>();
+
+                        if (query_variables.isArray()) {
+                            for (JsonNode node : query_variables) {
+                                String metric_rawJson = node.toString();
+                                Metric metric = new Gson().fromJson(metric_rawJson, Metric.class);
+                                queryVariablesList.add(metric);
+                            }
+                        }
+
+                        MetadataProfile metadataProfile = new MetadataProfile(
+                                entry.getApi_version(), entry.getKind(), metadata, entry.getProfile_version(), entry.getK8s_type(), entry.getDatasource(), queryVariablesList);
+                        metadataProfiles.add(metadataProfile);
+                    } catch (Exception e) {
+                        LOGGER.error(KruizeConstants.MetadataProfileConstants.MetadataProfileErrorMsgs.CONVERTING_METADATA_PROFILE_DB_OBJECT_ERROR, e.getMessage());
+                        LOGGER.error(entry.toString());
+                        failureCount++;
+                    }
+                }
+                if (failureThreshHold > 0 && failureCount == failureThreshHold) {
+                    throw new Exception(KruizeConstants.MetadataProfileConstants.MetadataProfileErrorMsgs.LOAD_METADATA_PROFILES_FROM_DB_FAILURE);
+                }
+
+                return metadataProfiles;
+            }
+
+            /**
+             * Converts MetadataProfile object to KruizeLMMetadataProfileEntry object
+             *
+             * @param metadataProfile MetadataProfile object
+             * @return KruizeLMMetadataProfileEntry objects
+             */
+            public static KruizeLMMetadataProfileEntry convertMetadataProfileObjToMetadataProfileDBObj(MetadataProfile metadataProfile) {
+                KruizeLMMetadataProfileEntry kruizeMetadataProfileEntry = null;
+                try {
+                    kruizeMetadataProfileEntry = new KruizeLMMetadataProfileEntry();
+                    kruizeMetadataProfileEntry.setApi_version(metadataProfile.getApiVersion());
+                    kruizeMetadataProfileEntry.setKind(metadataProfile.getKind());
+                    kruizeMetadataProfileEntry.setProfile_version(metadataProfile.getProfile_version());
+                    kruizeMetadataProfileEntry.setK8s_type(metadataProfile.getK8s_type());
+                    kruizeMetadataProfileEntry.setDatasource(metadataProfile.getDatasource());
+
+                    ObjectMapper objectMapper = new ObjectMapper();
+
+                    try {
+                        JsonNode metadataNode = objectMapper.readTree(metadataProfile.getMetadata().toString());
+                        kruizeMetadataProfileEntry.setMetadata(metadataNode);
+                    } catch (JsonProcessingException e) {
+                        throw new Exception(KruizeConstants.MetadataProfileConstants.MetadataProfileErrorMsgs.PROCESS_METADATA_PROFILE_OBJECT_ERROR + e.getMessage());
+                    }
+                    kruizeMetadataProfileEntry.setName(metadataProfile.getMetadata().get(KruizeConstants.JSONKeys.NAME).asText());
+
+                    try {
+                        kruizeMetadataProfileEntry.setQuery_variables(
+                                objectMapper.readTree(new Gson().toJson(metadataProfile.getQueryVariables())));
+                    } catch (JsonProcessingException e) {
+                        throw new Exception(KruizeConstants.MetadataProfileConstants.MetadataProfileErrorMsgs.PROCESS_QUERY_VARIABLES_ERROR + e.getMessage());
+                    }
+                } catch (Exception e) {
+                    LOGGER.error(KruizeConstants.MetadataProfileConstants.MetadataProfileErrorMsgs.CONVERT_METADATA_PROFILE_TO_DB_OBJECT_FAILURE, e.getMessage());
+                    e.printStackTrace();
+                }
+                return kruizeMetadataProfileEntry;
+            }
         }
 
-    }
-
-    /**
-     * Retrieves an existing DataSource from the DB entry or creates a new one if not found.
-     * @param kruizeMetadata            KruizeDSMetadataEntry object
-     * @param dataSourceMetadataInfo    DataSourceMetadataInfo object
-     * @return The DataSource instance associated with the DB entry.
-     */
-    private static DataSource getOrCreateDataSourceFromDB(KruizeDSMetadataEntry kruizeMetadata, DataSourceMetadataInfo dataSourceMetadataInfo) {
-        String dataSourceName = kruizeMetadata.getDataSourceName();
-
-        // Check if the data source already exists
-        if (dataSourceMetadataInfo.getDataSourceHashMap().containsKey(dataSourceName)) {
-            return dataSourceMetadataInfo.getDataSourceHashMap().get(dataSourceName);
-        }
-
-        DataSource dataSource = new DataSource(dataSourceName, new HashMap<>());
-        dataSourceMetadataInfo.getDataSourceHashMap().put(dataSourceName, dataSource);
-
-        return dataSource;
-    }
-
-    /**
-     * Retrieves an existing DataSourceCluster from the DB entry or creates a new one if not found.
-     * @param kruizeMetadata    KruizeDSMetadataEntry object
-     * @param dataSource        DataSource object
-     * @return The DataSourceCluster instance associated with the DB entry
-     */
-    private static DataSourceCluster getOrCreateDataSourceClusterFromDB(KruizeDSMetadataEntry kruizeMetadata, DataSource dataSource) {
-        String clusterName = kruizeMetadata.getClusterName();
-
-        // Check if the cluster already exists in the DataSource
-        if (dataSource.getDataSourceClusterHashMap().containsKey(clusterName)) {
-            return dataSource.getDataSourceClusterHashMap().get(clusterName);
-        }
-
-        DataSourceCluster dataSourceCluster = new DataSourceCluster(clusterName, new HashMap<>());
-        dataSource.getDataSourceClusterHashMap().put(clusterName, dataSourceCluster);
-
-        return dataSourceCluster;
-    }
-
-    /**
-     * Retrieves an existing DataSourceNamespace from the DB entry or creates a new one if not found.
-     * @param kruizeMetadata    KruizeDSMetadataEntry object
-     * @param dataSourceCluster DataSourceCluster object
-     * @return The DataSourceNamespace instance associated with the DB entry
-     */
-    private static DataSourceNamespace getOrCreateDataSourceNamespaceFromDB(KruizeDSMetadataEntry kruizeMetadata, DataSourceCluster dataSourceCluster) {
-        String namespaceName = kruizeMetadata.getNamespace();
-
-        // Check if the namespace already exists in the DataSourceCluster
-        if (dataSourceCluster.getDataSourceNamespaceHashMap().containsKey(namespaceName)) {
-            return dataSourceCluster.getDataSourceNamespaceHashMap().get(namespaceName);
-        }
-
-        DataSourceNamespace dataSourceNamespace = new DataSourceNamespace(namespaceName, new HashMap<>());
-        dataSourceCluster.getDataSourceNamespaceHashMap().put(namespaceName, dataSourceNamespace);
-
-        return dataSourceNamespace;
-    }
-
-    /**
-     * Retrieves an existing DataSourceWorkload from the DB entry or creates a new one if not found.
-     * @param kruizeMetadata        KruizeDSMetadataEntry object
-     * @param dataSourceNamespace   DataSourceNamespace object
-     * @return The DataSourceWorkload instance associated with the DB entry
-     */
-    private static DataSourceWorkload getOrCreateDataSourceWorkloadFromDB(KruizeDSMetadataEntry kruizeMetadata, DataSourceNamespace dataSourceNamespace) {
-        String workloadName = kruizeMetadata.getWorkloadName();
-
-        if (null == workloadName) {
-            return null;
-        }
-
-        // Check if the workload already exists in the DataSourceNamespace
-        if (dataSourceNamespace.getDataSourceWorkloadHashMap().containsKey(workloadName)) {
-            return dataSourceNamespace.getDataSourceWorkloadHashMap().get(workloadName);
-        }
-
-        DataSourceWorkload dataSourceWorkload = new DataSourceWorkload(workloadName, kruizeMetadata.getWorkloadType(), new HashMap<>());
-        dataSourceNamespace.getDataSourceWorkloadHashMap().put(workloadName, dataSourceWorkload);
-
-        return dataSourceWorkload;
-    }
-
-    /**
-     * Retrieves an existing DataSourceContainer from the DB entry or creates a new one if not found.
-     * @param kruizeMetadata        KruizeDSMetadataEntry object
-     * @param dataSourceWorkload    DataSourceWorkload object
-     * @return The DataSourceContainer instance associated with the DB entry
-     */
-    private static DataSourceContainer getOrCreateDataSourceContainerFromDB(KruizeDSMetadataEntry kruizeMetadata, DataSourceWorkload dataSourceWorkload) {
-        String containerName = kruizeMetadata.getContainerName();
-
-        if (null == containerName) {
-            return null;
-        }
-
-        // Check if the container already exists in the DataSourceWorkload
-        if (dataSourceWorkload.getDataSourceContainerHashMap().containsKey(containerName)) {
-            return dataSourceWorkload.getDataSourceContainerHashMap().get(containerName);
-        }
-
-        DataSourceContainer dataSourceContainer = new DataSourceContainer(containerName, kruizeMetadata.getContainerImageName());
-        dataSourceWorkload.getDataSourceContainerHashMap().put(containerName, dataSourceContainer);
-
-        return dataSourceContainer;
-    }
-
-    private static KruizeDSMetadataEntry getMetadata(String datasource) {
-        DataSourceMetadataOperator dataSourceMetadataOperator = DataSourceMetadataOperator.getInstance();
-        HashMap<String, DataSourceInfo> dataSources = DataSourceCollection.getInstance().getDataSourcesCollection();
-        DataSourceMetadataInfo dataSourceMetadataInfo = dataSourceMetadataOperator.getDataSourceMetadataInfo(dataSources.get(datasource));
-        List<KruizeDSMetadataEntry> kruizeMetadataList = Converters.KruizeObjectConverters.convertDataSourceMetadataToMetadataObj(dataSourceMetadataInfo);
-        if (kruizeMetadataList.isEmpty())
-            return null;
-        else
-            return kruizeMetadataList.get(0);
     }
 }

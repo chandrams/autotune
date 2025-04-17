@@ -26,8 +26,22 @@ public class BulkInput {
     private TimeRange time_range;
     private String datasource;
     private Webhook webhook;
+    private String metadata_profile;
+    private String measurement_duration;
+    private String requestId; //TODO: to be used for the Kafka consumer case to map requestID with jobID
 
     // Getters and Setters
+
+    public String getRequestId() {
+        return requestId;
+    }
+
+    public void setRequestId(String requestId) {
+        this.requestId = requestId;
+    }
+
+    public BulkInput() {
+    }
 
     public TimeRange getTime_range() {
         return time_range;
@@ -52,6 +66,22 @@ public class BulkInput {
     public void setFilter(FilterWrapper filter) {
         this.filter = filter;
     }
+
+    public Webhook getWebhook() {
+        return webhook;
+    }
+
+    public void setWebhook(Webhook webhook) {
+        this.webhook = webhook;
+    }
+
+    public String getMetadata_profile() { return metadata_profile;}
+
+    public void setMetadata_profile(String metadata_profile) { this.metadata_profile = metadata_profile;}
+
+    public String getMeasurement_duration() {return measurement_duration;}
+
+    public void setMeasurement_duration(String measurement_duration) {this.measurement_duration = measurement_duration;}
 
     // Nested class for FilterWrapper that contains 'exclude' and 'include'
     public static class FilterWrapper {
@@ -138,21 +168,17 @@ public class BulkInput {
         }
     }
 
-    public static class Webhook{
+    public static class Webhook {
         private String url;
+
         public String getUrl() {
             return url;
         }
+
         public void setUrl(String url) {
             this.url = url;
         }
     }
 
-    public Webhook getWebhook() {
-        return webhook;
-    }
-
-    public void setWebhook(Webhook webhook) {
-        this.webhook = webhook;
-    }
+  
 }

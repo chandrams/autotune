@@ -1,5 +1,6 @@
 package com.autotune.database.table;
 
+import com.autotune.database.table.lm.KruizeLMRecommendationEntry;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.persistence.*;
 import org.hibernate.annotations.JdbcTypeCode;
@@ -29,6 +30,18 @@ public class KruizeRecommendationEntry {
     private JsonNode extended_data;
     @Transient
     private String experiment_type;
+
+    public KruizeRecommendationEntry(KruizeLMRecommendationEntry recommendationEntry) {
+        this.experiment_name = recommendationEntry.getExperiment_name();
+        this.interval_end_time = recommendationEntry.getInterval_end_time();
+        this.cluster_name = recommendationEntry.getCluster_name();
+        this.extended_data = recommendationEntry.getExtended_data();
+        this.version = recommendationEntry.getVersion();
+    }
+
+    public KruizeRecommendationEntry() {
+
+    }
 
     public String getExperiment_name() {
         return experiment_name;

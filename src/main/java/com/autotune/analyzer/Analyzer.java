@@ -16,12 +16,13 @@
 package com.autotune.analyzer;
 
 import com.autotune.analyzer.experiment.Experimentator;
+import com.autotune.analyzer.metadataProfiles.MetadataProfileDeployment;
 import com.autotune.analyzer.performanceProfiles.PerformanceProfilesDeployment;
 import com.autotune.analyzer.services.*;
 import com.autotune.operator.KruizeDeploymentInfo;
 import com.autotune.operator.KruizeOperator;
 import com.autotune.utils.ServerContext;
-import org.eclipse.jetty.servlet.ServletContextHandler;
+import org.eclipse.jetty.ee8.servlet.ServletContextHandler;
 
 public class Analyzer {
     public static void start(ServletContextHandler contextHandler) {
@@ -32,6 +33,9 @@ public class Analyzer {
         try {
             addServlets(contextHandler);
             PerformanceProfilesDeployment.getPerformanceProfiles(); //  Performance profile should be called first
+            if (KruizeDeploymentInfo.local) {
+                MetadataProfileDeployment.getMetadataProfiles();
+            }
             KruizeOperator.getKruizeObjects(kruizeOperator);
         } catch (Exception e) {
             e.printStackTrace();
@@ -59,6 +63,9 @@ public class Analyzer {
         context.addServlet(ListDatasources.class, ServerContext.LIST_DATASOURCES);
         context.addServlet(DSMetadataService.class, ServerContext.DATASOURCE_METADATA);
         context.addServlet(BulkService.class, ServerContext.BULK_SERVICE);
+        context.addServlet(MetadataProfileService.class, ServerContext.CREATE_METADATA_PROFILE);
+        context.addServlet(MetadataProfileService.class, ServerContext.LIST_METADATA_PROFILES);
+        context.addServlet(MetadataProfileService.class, ServerContext.DELETE_METADATA_PROFILE);
 
         // Adding UI support API's
         context.addServlet(ListNamespaces.class, ServerContext.LIST_NAMESPACES);

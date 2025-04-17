@@ -24,6 +24,8 @@ import com.autotune.common.exceptions.datasource.DataSourceDoesNotExist;
 import com.autotune.database.dao.ExperimentDAOImpl;
 import com.autotune.database.service.ExperimentDBService;
 import com.autotune.utils.KruizeConstants;
+import com.autotune.utils.MetricsConfig;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,22 +60,36 @@ public class DataSourceManager {
      * Imports Metadata for a specific data source using associated DataSourceInfo.
      *
      * @param dataSourceInfo
-     * @param uniqueKey      this is used as labels in query example container="xyz" namespace="abc"
-     * @param startTime      Get metadata from starttime to endtime
-     * @param endTime        Get metadata from starttime to endtime
-     * @param steps          the interval between data points in a range query
+     * @param uniqueKey        this is used as labels in query example container="xyz" namespace="abc"
+     * @param startTime        Get metadata from starttime to endtime
+     * @param endTime          Get metadata from starttime to endtime
+     * @param steps            the interval between data points in a range query
+     * @param includeResources
+     * @param excludeResources
      * @return
      */
-    public DataSourceMetadataInfo importMetadataFromDataSource(DataSourceInfo dataSourceInfo, String uniqueKey, long startTime, long endTime, int steps) throws DataSourceDoesNotExist, IOException, NoSuchAlgorithmException, KeyStoreException, KeyManagementException {
-        if (null == dataSourceInfo) {
-            throw new DataSourceDoesNotExist(KruizeConstants.DataSourceConstants.DataSourceErrorMsgs.MISSING_DATASOURCE_INFO);
+    public DataSourceMetadataInfo importMetadataFromDataSource(String metadataProfileName, DataSourceInfo dataSourceInfo, String uniqueKey, long startTime, long endTime, int steps, int measurementDuration, Map<String, String> includeResources,
+                                                               Map<String, String> excludeResources) throws DataSourceDoesNotExist, IOException, NoSuchAlgorithmException, KeyStoreException, KeyManagementException {
+        String statusValue = "failure";
+        io.micrometer.core.instrument.Timer.Sample timerImportMetadata = Timer.start(MetricsConfig.meterRegistry());
+        try {
+            if (null == dataSourceInfo) {
+                throw new DataSourceDoesNotExist(KruizeConstants.DataSourceConstants.DataSourceErrorMsgs.MISSING_DATASOURCE_INFO);
+            }
+            DataSourceMetadataInfo dataSourceMetadataInfo = dataSourceMetadataOperator.createDataSourceMetadata(metadataProfileName,
+                    dataSourceInfo, uniqueKey, startTime, endTime, steps, measurementDuration, includeResources, excludeResources);
+            if (null == dataSourceMetadataInfo) {
+                LOGGER.error(KruizeConstants.DataSourceConstants.DataSourceMetadataErrorMsgs.DATASOURCE_METADATA_INFO_NOT_AVAILABLE, "for datasource {}" + dataSourceInfo.getName());
+                return null;
+            }
+            statusValue = "success";
+            return dataSourceMetadataInfo;
+        } finally {
+            if (null != timerImportMetadata) {
+                MetricsConfig.timerImportMetadata = MetricsConfig.timerBImportMetadata.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerImportMetadata.stop(MetricsConfig.timerImportMetadata);
+            }
         }
-        DataSourceMetadataInfo dataSourceMetadataInfo = dataSourceMetadataOperator.createDataSourceMetadata(dataSourceInfo, uniqueKey, startTime, endTime, steps);
-        if (null == dataSourceMetadataInfo) {
-            LOGGER.error(KruizeConstants.DataSourceConstants.DataSourceMetadataErrorMsgs.DATASOURCE_METADATA_INFO_NOT_AVAILABLE, "for datasource {}" + dataSourceInfo.getName());
-            return null;
-        }
-        return dataSourceMetadataInfo;
     }
 
     /**
@@ -84,6 +100,8 @@ public class DataSourceManager {
      * @throws DataSourceDoesNotExist Thrown when the provided data source information is null.
      */
     public DataSourceMetadataInfo getMetadataFromDataSource(DataSourceInfo dataSource) {
+        String statusValue = "failure";
+        io.micrometer.core.instrument.Timer.Sample timerGetMetadata = Timer.start(MetricsConfig.meterRegistry());
         try {
             if (null == dataSource) {
                 throw new DataSourceDoesNotExist(KruizeConstants.DataSourceConstants.DataSourceErrorMsgs.MISSING_DATASOURCE_INFO);
@@ -91,14 +109,20 @@ public class DataSourceManager {
             String dataSourceName = dataSource.getName();
             DataSourceMetadataInfo dataSourceMetadataInfo = dataSourceMetadataOperator.getDataSourceMetadataInfo(dataSource);
             if (null == dataSourceMetadataInfo) {
-                LOGGER.error(KruizeConstants.DataSourceConstants.DataSourceMetadataErrorMsgs.DATASOURCE_METADATA_INFO_NOT_AVAILABLE, "for datasource {}" + dataSourceName);
+                LOGGER.error(DATASOURCE_METADATA_INFO_NOT_AVAILABLE, "for datasource {}" + dataSourceName);
                 return null;
             }
+            statusValue = "success";
             return dataSourceMetadataInfo;
         } catch (DataSourceDoesNotExist e) {
             LOGGER.error(e.getMessage());
         } catch (Exception e) {
             LOGGER.error("Loading saved datasource metadata failed: {} ", e.getMessage());
+        } finally {
+            if (null != timerGetMetadata) {
+                MetricsConfig.timerGetMetadata = MetricsConfig.timerBGetMetadata.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerGetMetadata.stop(MetricsConfig.timerGetMetadata);
+            }
         }
         return null;
     }
@@ -110,15 +134,15 @@ public class DataSourceManager {
      * @param dataSourceMetadataInfo The existing DataSourceMetadataInfo object containing the current
      *                               metadata information of the data source.
      */
-    public void updateMetadataFromDataSource(DataSourceInfo dataSource, DataSourceMetadataInfo dataSourceMetadataInfo) {
+    public void updateMetadataFromDataSource(String metadataProfileName, DataSourceInfo dataSource, DataSourceMetadataInfo dataSourceMetadataInfo, int measurementDuration) {
         try {
             if (null == dataSource) {
                 throw new DataSourceDoesNotExist(KruizeConstants.DataSourceConstants.DataSourceErrorMsgs.MISSING_DATASOURCE_INFO);
             }
             if (null == dataSourceMetadataInfo) {
-                throw new DataSourceDoesNotExist(KruizeConstants.DataSourceConstants.DataSourceMetadataErrorMsgs.DATASOURCE_METADATA_INFO_NOT_AVAILABLE);
+                throw new DataSourceDoesNotExist(DATASOURCE_METADATA_INFO_NOT_AVAILABLE);
             }
-            dataSourceMetadataOperator.updateDataSourceMetadata(dataSource, "", 0, 0, 0);
+            dataSourceMetadataOperator.updateDataSourceMetadata(metadataProfileName, dataSource, "", 0, 0, 0, measurementDuration, null, null);
         } catch (Exception e) {
             LOGGER.error(e.getMessage());
         }
@@ -236,7 +260,7 @@ public class DataSourceManager {
             DataSourceInfo datasource = new ExperimentDBService().loadDataSourceFromDBByName(dataSourceName);
             return datasource;
         } catch (Exception e) {
-            LOGGER.error(String.format(KruizeConstants.DataSourceConstants.DataSourceMetadataErrorMsgs.LOAD_DATASOURCE_FROM_DB_ERROR, dataSourceName, e.getMessage()));
+            LOGGER.error(String.format(LOAD_DATASOURCE_FROM_DB_ERROR, dataSourceName, e.getMessage()));
         }
         return null;
     }
@@ -256,7 +280,7 @@ public class DataSourceManager {
             DataSourceMetadataInfo metadataInfo = new ExperimentDBService().loadMetadataFromDBByName(dataSourceName, verbose);
             return metadataInfo;
         } catch (Exception e) {
-            LOGGER.error(String.format(KruizeConstants.DataSourceConstants.DataSourceMetadataErrorMsgs.LOAD_DATASOURCE_METADATA_FROM_DB_ERROR, dataSourceName, e.getMessage()));
+            LOGGER.error(String.format(LOAD_DATASOURCE_METADATA_FROM_DB_ERROR, dataSourceName, e.getMessage()));
         }
         return null;
     }
@@ -276,11 +300,11 @@ public class DataSourceManager {
         try {
             HashMap<String, DataSource> filteredDataSourceHashMap = new HashMap<>();
 
-            DataSource dataSource = dataSourceMetadataInfo.getDataSourceHashMap().get(dataSourceName);
+            DataSource dataSource = dataSourceMetadataInfo.getDatasources().get(dataSourceName);
 
             HashMap<String, DataSourceCluster> filteredClusterHashMap = new HashMap<>();
 
-            for (Map.Entry<String, DataSourceCluster> clusterEntry : dataSource.getDataSourceClusterHashMap().entrySet()) {
+            for (Map.Entry<String, DataSourceCluster> clusterEntry : dataSource.getClusters().entrySet()) {
                 String clusterName = clusterEntry.getKey();
                 DataSourceCluster cluster = clusterEntry.getValue();
 

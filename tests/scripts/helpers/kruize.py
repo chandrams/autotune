@@ -18,7 +18,6 @@ import json
 import requests
 import subprocess
 
-
 def get_kruize_url():
     return URL
 
@@ -150,10 +149,12 @@ def update_recommendations(experiment_name, startTime, endTime):
 
 # Description: This function obtains the recommendations from Kruize Autotune using listRecommendations API
 # Input Parameters: experiment name, flag indicating latest result and monitoring end time
-def list_recommendations(experiment_name=None, latest=None, monitoring_end_time=None):
+def list_recommendations(experiment_name=None, latest=None, monitoring_end_time=None, rm=False):
     PARAMS = ""
     print("\nListing the recommendations...")
     url = URL + "/listRecommendations"
+    if rm:
+        url += "?rm=true"
     print("URL = ", url)
 
     if experiment_name == None:
@@ -183,12 +184,15 @@ def list_recommendations(experiment_name=None, latest=None, monitoring_end_time=
 
 # Description: This function deletes the experiment and posts the experiment using createExperiment API to Kruize Autotune
 # Input Parameters: experiment input json
-def delete_experiment(input_json_file, invalid_header=False):
+def delete_experiment(input_json_file, invalid_header=False, rm=True):
     json_file = open(input_json_file, "r")
     input_json = json.loads(json_file.read())
 
     print("\nDeleting the experiment...")
     url = URL + "/createExperiment"
+    params = {'rm': str(rm).lower()}
+    print("params: ", params)
+
     print("URL = ", url)
 
     experiment_name = input_json[0]['experiment_name']
@@ -200,9 +204,9 @@ def delete_experiment(input_json_file, invalid_header=False):
     headers = {'content-type': 'application/xml'}
     if invalid_header:
         print("Invalid header")
-        response = requests.delete(url, json=delete_json, headers=headers)
+        response = requests.delete(url, json=delete_json, headers=headers, params=params)
     else:
-        response = requests.delete(url, json=delete_json)
+        response = requests.delete(url, json=delete_json, params=params)
 
     print(response)
     print("Response status code = ", response.status_code)
@@ -227,7 +231,7 @@ def create_performance_profile(perf_profile_json_file):
 
 # Description: This function obtains the experiments from Kruize Autotune using listExperiments API
 # Input Parameters: None
-def list_experiments(results=None, recommendations=None, latest=None, experiment_name=None):
+def list_experiments(results=None, recommendations=None, latest=None, experiment_name=None, rm=False):
     print("\nListing the experiments...")
     query_params = {}
 
@@ -243,7 +247,11 @@ def list_experiments(results=None, recommendations=None, latest=None, experiment
     query_string = "&".join(f"{key}={value}" for key, value in query_params.items())
 
     url = URL + "/listExperiments"
-    if query_string:
+    if rm:
+        url += "?rm=true"
+        if query_string:
+            url += "&" + query_string
+    else:
         url += "?" + query_string
     print("URL = ", url)
     response = requests.get(url)
@@ -391,6 +399,7 @@ def create_metric_profile(metric_profile_json_file):
     print(response.text)
     return response
 
+
 # Description: This function deletes the metric profile
 # Input Parameters: metric profile input json
 def delete_metric_profile(input_json_file, invalid_header=False):
@@ -447,6 +456,7 @@ def list_metric_profiles(name=None, verbose=None, logging=True):
         print("\n************************************************************")
     return response
 
+
 # Description: This function generates recommendation for the given experiment_name
 def generate_recommendations(experiment_name):
     print("\n************************************************************")
@@ -464,31 +474,127 @@ def generate_recommendations(experiment_name):
     print("\n************************************************************")
     return response
 
-def post_bulk_api(input_json_file):
-    print("\n************************************************************")
-    print("Sending POST request to URL: ", f"{URL}/bulk")
-    print("Request Payload: ", input_json_file)
-    curl_command = f"curl -X POST {URL}/bulk -H 'Content-Type: application/json' -d '{json.dumps(input_json_file)}'"
-    print("Equivalent cURL command: ", curl_command)
+def log_message(message, logger=None):
+ if logger:
+      logger.info(message)
+ else:
+      print(message)
+
+def post_bulk_api(input_json_file, logger=None):
+    msg = ("\n************************************************************")
+    log_message(msg, logger)
+
+    msg = f"Sending POST request to URL: {URL}/bulk"
+    log_message(msg, logger)
+
+    msg = logger.info(f"Request Payload: {input_json_file}")
+    log_message(msg, logger)
+
+    msg = f"curl -X POST {URL}/bulk -H 'Content-Type: application/json' -d '{json.dumps(input_json_file)}'"
+    log_message(msg, logger)
 
     # Send the POST request
     response = requests.post(f"{URL}/bulk", json=input_json_file)
-    print("Response Status Code: ", response.status_code)
-    print("Response JSON: ", response.json())
+
+    msg = f"Response Status Code: {response.status_code}"
+    log_message(msg, logger)
+
+    msg = f"Response JSON: {response.json()}"
+    log_message(msg, logger)
+
     return response
 
-def get_bulk_job_status(job_id,verbose=False):
-    print("\n************************************************************")
-    url_basic = f"{URL}/bulk?job_id={job_id}"
-    url_verbose = f"{URL}/bulk?job_id={job_id}&verbose={verbose}"
-    getJobIDURL = url_basic
-    if verbose:
-        getJobIDURL = url_verbose
-    print("Sending GET request to URL ( verbose=",verbose," ): ", getJobIDURL)
-    curl_command_verbose = f"curl -X GET '{getJobIDURL}'"
-    print("Equivalent cURL command : ", curl_command_verbose)
-    response = requests.get(url_verbose)
 
-    print("Verbose GET Response Status Code: ", response.status_code)
-    print("Verbose GET Response JSON: ", response.json())
+def get_bulk_job_status(job_id,include=None,logger=None):
+    msg = "\n************************************************************"
+    log_message(msg, logger)
+    
+    url_basic = f"{URL}/bulk?job_id={job_id}"
+    url_include = f"{URL}/bulk?job_id={job_id}&include={include}"
+    getJobIDURL = url_basic
+    if include:
+        getJobIDURL = url_include
+
+    msg = f"Sending GET request to URL ( include={include} ): {getJobIDURL}"
+    log_message(msg, logger)
+
+    curl_command_include = f"curl -X GET '{getJobIDURL}'"
+
+    msg = f"Equivalent cURL command : {curl_command_include}"
+    log_message(msg, logger)
+
+    response = requests.get(getJobIDURL)
+
+    msg = f"Include GET Response Status Code: {response.status_code}"
+    log_message(msg, logger)
+
+    if logger and include == "summary" or logger == None:
+         msg = f"Include GET Response JSON: {response.json()}"
+         log_message(msg, logger)
+
+    return response
+
+
+# Description: This function creates a metadata profile using the Kruize createMetadataProfile API
+# Input Parameters: metadata profile json
+def create_metadata_profile(metadata_profile_json_file):
+    json_file = open(metadata_profile_json_file, "r")
+    metric_profile_json = json.loads(json_file.read())
+
+    print("\nCreating metadata profile...")
+    url = URL + "/createMetadataProfile"
+    print("URL = ", url)
+
+    response = requests.post(url, json=metric_profile_json)
+    print("Response status code = ", response.status_code)
+    print(response.text)
+    return response
+
+
+# Description: This function deletes the metadata profile
+# Input Parameters: metadata profile input json
+def delete_metadata_profile(metadata_profile_name):
+    print("\nDeleting the metadata profile...")
+    url = URL + "/deleteMetadataProfile"
+
+    query_string = f"name={metadata_profile_name}"
+
+    if query_string:
+        url += "?" + query_string
+    print("URL = ", url)
+
+    response = requests.delete(url)
+
+    print(response)
+    print("Response status code = ", response.status_code)
+    return response
+
+
+# Description: This function lists the metadata profile from Kruize Autotune using GET listMetadataProfiles API
+# Input Parameters: metadata profile name, verbose - flag indicating granularity of data to be listed
+# and logging - flag determining whether to output response data.
+def list_metadata_profiles(name=None, verbose=None, logging=True):
+    print("\nListing the metadata profiles...")
+
+    query_params = {}
+
+    if name is not None:
+        query_params['name'] = name
+    if verbose is not None:
+        query_params['verbose'] = verbose
+
+    query_string = "&".join(f"{key}={value}" for key, value in query_params.items())
+
+    url = URL + "/listMetadataProfiles"
+    if query_string:
+        url += "?" + query_string
+    print("URL = ", url)
+    print("PARAMS = ", query_params)
+    response = requests.get(url)
+
+    print("Response status code = ", response.status_code)
+    if logging:
+        print("\n************************************************************")
+        print(response.text)
+        print("\n************************************************************")
     return response

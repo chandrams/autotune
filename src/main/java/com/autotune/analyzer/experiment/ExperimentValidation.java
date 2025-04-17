@@ -16,8 +16,8 @@
 package com.autotune.analyzer.experiment;
 
 import com.autotune.analyzer.kruizeObject.KruizeObject;
+import com.autotune.analyzer.metadataProfiles.MetadataProfile;
 import com.autotune.analyzer.performanceProfiles.PerformanceProfile;
-import com.autotune.analyzer.performanceProfiles.PerformanceProfilesDeployment;
 import com.autotune.analyzer.recommendations.ContainerRecommendations;
 import com.autotune.analyzer.utils.AnalyzerConstants;
 import com.autotune.analyzer.utils.AnalyzerErrorConstants;
@@ -49,6 +49,8 @@ public class ExperimentValidation {
     private String errorMessage;
     private Map<String, KruizeObject> mainKruizeExperimentMAP;
     private Map<String, PerformanceProfile> performanceProfilesMap = new HashMap<>();
+    private Map<String, MetadataProfile> metadataProfilesMap = new HashMap<>();
+
     //Mandatory fields
     private List<String> mandatoryFields = new ArrayList<>(Arrays.asList(
             AnalyzerConstants.NAME,
@@ -90,7 +92,11 @@ public class ExperimentValidation {
             if (validationOutputData.isSuccess()) {
                 String expName = kruizeObject.getExperimentName();
                 try {
-                    new ExperimentDBService().loadExperimentFromDBByName(mainKruizeExperimentMAP, expName);
+                    if (KruizeDeploymentInfo.is_ros_enabled && kruizeObject.getTarget_cluster().equalsIgnoreCase(AnalyzerConstants.REMOTE)) { // todo call this in function and use across every where
+                        new ExperimentDBService().loadExperimentFromDBByName(mainKruizeExperimentMAP, expName);
+                    } else {
+                        new ExperimentDBService().loadLMExperimentFromDBByName(mainKruizeExperimentMAP, expName);
+                    }
                 } catch (Exception e) {
                     LOGGER.error("Loading saved experiment {} failed: {} ", expName, e.getMessage());
                 }
@@ -108,7 +114,7 @@ public class ExperimentValidation {
                         } else {
                             // fetch the Performance / Metric Profile from the DB
                             try {
-                                if (!KruizeDeploymentInfo.local) {
+                                if (KruizeDeploymentInfo.is_ros_enabled && target_cluster.equalsIgnoreCase(AnalyzerConstants.REMOTE)) { // todo call this in function and use across every where
                                     new ExperimentDBService().loadPerformanceProfileFromDBByName(performanceProfilesMap, kruizeObject.getPerformanceProfile());
                                 } else {
                                     new ExperimentDBService().loadMetricProfileFromDBByName(performanceProfilesMap, kruizeObject.getPerformanceProfile());
@@ -135,6 +141,51 @@ public class ExperimentValidation {
                             }
                             kruizeObject.setPerformanceProfile(perfProfileName);
                             proceed = true;
+                        }
+                    }
+
+                    // This conditional check is required as metadata_profile field is added only for local monitoring experiments
+                    // and ignoring this might break the remote monitoring production
+                    if (KruizeDeploymentInfo.local && target_cluster.equalsIgnoreCase(AnalyzerConstants.LOCAL)) {
+                        if (null != kruizeObject.getMetadataProfile()) {
+                            String metadataProfileName = kruizeObject.getMetadataProfile();
+                            // fetch the Metadata Profile from the DB
+                            try {
+                                new ExperimentDBService().loadMetadataProfileFromDBByName(metadataProfilesMap, metadataProfileName);
+                            } catch (Exception e) {
+                                LOGGER.error(String.format(AnalyzerErrorConstants.AutotuneObjectErrors.LOAD_METADATA_PROFILE_FAILURE, metadataProfileName, e.getMessage()));
+                            }
+
+                            if (null == metadataProfilesMap.get(metadataProfileName)) {
+                                errorMsg = AnalyzerErrorConstants.AutotuneObjectErrors.MISSING_METADATA_PROFILE + metadataProfileName;
+                                validationOutputData.setErrorCode(HttpServletResponse.SC_BAD_REQUEST);
+                                proceed = false;
+                            } else {
+                                proceed = true;
+                            }
+                        } else {
+                            errorMsg = AnalyzerErrorConstants.AutotuneObjectErrors.MISSING_METADATA_PROFILE_FIELD;
+                            validationOutputData.setErrorCode(HttpServletResponse.SC_BAD_REQUEST);
+                            proceed = false;
+                        }
+                    }
+
+                    // validate mode and experiment type
+                    if (AnalyzerConstants.AUTO.equalsIgnoreCase(mode) || AnalyzerConstants.RECREATE.equalsIgnoreCase(mode)) {
+                        if (kruizeObject.isNamespaceExperiment()) {
+                            errorMsg = AnalyzerErrorConstants.APIErrors.CreateExperimentAPI.INVALID_MODE_FOR_NAMESPACE_EXP;
+                            validationOutputData.setErrorCode(HttpServletResponse.SC_BAD_REQUEST);
+                            proceed = false;
+                        } else {
+                            // verifying kubernetes object type for container experiment
+                            List<K8sObject> k8sObjects = kruizeObject.getKubernetes_objects();
+                            for (K8sObject k8sObject : k8sObjects) {
+                                if (!AnalyzerConstants.K8sObjectConstants.Types.DEPLOYMENT.equalsIgnoreCase(k8sObject.getType())) {
+                                    errorMsg = AnalyzerErrorConstants.APIErrors.CreateExperimentAPI.INVALID_OBJECT_TYPE_FOR_AUTO_EXP;
+                                    validationOutputData.setErrorCode(HttpServletResponse.SC_BAD_REQUEST);
+                                    proceed = false;
+                                }
+                            }
                         }
                     }
                 } else {
@@ -242,6 +293,73 @@ public class ExperimentValidation {
                             }
                     );
                 }
+
+
+                if (AnalyzerConstants.AUTO.equalsIgnoreCase(expObj.getMode()) || AnalyzerConstants.RECREATE.equalsIgnoreCase(expObj.getMode())) {
+                    // only vpa specific check for multiple term & model
+
+                    if (expObj.getRecommendation_settings().getTermSettings() != null &&
+                            expObj.getRecommendation_settings().getTermSettings().getTerms() != null &&
+                            expObj.getRecommendation_settings().getTermSettings().getTerms().size() > 1) {
+                        // Checks for multiple terms and throws error
+                        errorMsg = AnalyzerErrorConstants.APIErrors.CreateExperimentAPI.MULTIPLE_TERMS_UNSUPPORTED;
+                        validationOutputData.setErrorCode(HttpServletResponse.SC_BAD_REQUEST);
+                        validationOutputData.setSuccess(false);
+                        validationOutputData.setMessage(errorMsg);
+                        return validationOutputData;
+                    }
+                    // Check for multiple models
+                    if (expObj.getRecommendation_settings().getModelSettings() != null &&
+                            expObj.getRecommendation_settings().getModelSettings().getModels() != null &&
+                            expObj.getRecommendation_settings().getModelSettings().getModels().size() > 1) {
+                        errorMsg = AnalyzerErrorConstants.APIErrors.CreateExperimentAPI.MULTIPLE_MODELS_UNSUPPORTED;
+                        validationOutputData.setErrorCode(HttpServletResponse.SC_BAD_REQUEST);
+                        validationOutputData.setSuccess(false);
+                        validationOutputData.setMessage(errorMsg);
+                        return validationOutputData;
+                    }
+                }
+
+                // common check for terms and models
+                if (expObj.getRecommendation_settings().getTermSettings() != null &&
+                        expObj.getRecommendation_settings().getTermSettings().getTerms() != null ) {
+                    Set<String> validTerms = Set.of(KruizeConstants.JSONKeys.SHORT, KruizeConstants.JSONKeys.MEDIUM, KruizeConstants.JSONKeys.LONG);
+
+                    for(String term: expObj.getRecommendation_settings().getTermSettings().getTerms()) {
+                        // Check for whitespace in terms
+                        if (term == null || term.trim().isEmpty()) {
+                            errorMsg = AnalyzerErrorConstants.APIErrors.CreateExperimentAPI.WHITESPACE_NOT_ALLOWED;
+                            validationOutputData.setErrorCode(HttpServletResponse.SC_BAD_REQUEST);
+                            validationOutputData.setSuccess(false);
+                            validationOutputData.setMessage(errorMsg);
+                            return validationOutputData;
+                        }
+                        // Check for correct term in terms
+                        if (!validTerms.contains(term)) {
+                            throw new IllegalArgumentException(term + AnalyzerErrorConstants.APIErrors.CreateExperimentAPI.INVALID_TERM_NAME);
+                        }
+                    }
+                    LOGGER.info("All terms are valid");
+                }
+
+                if (expObj.getRecommendation_settings().getModelSettings() != null &&
+                        expObj.getRecommendation_settings().getModelSettings().getModels() != null) {
+                    Set<String> validModels = Set.of(KruizeConstants.JSONKeys.COST, KruizeConstants.JSONKeys.PERFORMANCE);
+
+                    for (String model: expObj.getRecommendation_settings().getModelSettings().getModels()) {
+                        if (model == null || model.trim().isEmpty()) {
+                            errorMsg = AnalyzerErrorConstants.APIErrors.CreateExperimentAPI.WHITESPACE_NOT_ALLOWED;
+                            validationOutputData.setErrorCode(HttpServletResponse.SC_BAD_REQUEST);
+                            validationOutputData.setSuccess(false);
+                            validationOutputData.setMessage(errorMsg);
+                            return validationOutputData;
+                        }
+                        if (!validModels.contains(model)) {
+                            throw new IllegalArgumentException( model + AnalyzerErrorConstants.APIErrors.CreateExperimentAPI.INVALID_MODEL_NAME);
+                        }
+                    }
+                }
+
                 String depType = "";
                 if (expObj.getExperiment_usecase_type().isRemote_monitoring()) {
                     // In case of RM, kubernetes_obj is mandatory

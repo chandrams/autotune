@@ -9,6 +9,58 @@ metadata:
   name: kruize-sa
   namespace: openshift-tuning
 ---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: kruize-recommendation-updater
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - customresourcedefinitions
+    verbs:
+      - '*'
+  - apiGroups:
+      - apiextensions.k8s.io
+    resources:
+      - customresourcedefinitions
+    verbs:
+      - '*'
+  - apiGroups:
+      - autoscaling.k8s.io
+    resources:
+      - verticalpodautoscalers
+      - verticalpodautoscalers/status
+      - verticalpodautoscalercheckpoints
+    verbs:
+      - '*'
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - clusterrolebindings
+    verbs:
+      - '*'
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - "*"
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: kruize-recommendation-updater-crb
+subjects:
+  - kind: ServiceAccount
+    name: kruize-sa
+    namespace: openshift-tuning
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kruize-recommendation-updater
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -20,6 +72,56 @@ subjects:
 roleRef:
   kind: ClusterRole
   name: cluster-monitoring-view
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kruize-edit-ko
+rules:
+  - apiGroups: [ "apps" ]
+    resources: [ "deployments", "statefulsets", "daemonsets" ]
+    verbs: [ "get", "list", "patch", "update" ]
+  - apiGroups: [ "batch" ]
+    resources: [ "jobs" ]
+    verbs: [ "get", "list", "create", "delete" ]
+  - apiGroups: [ "" ]
+    resources: [ "namespaces" ]
+    verbs: [ "get", "list" ]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: instaslices-access
+rules:
+  - apiGroups: [ "inference.redhat.com" ]
+    resources: [ "instaslices" ]
+    verbs: [ "get", "list", "watch" ]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: instaslices-access-binding
+subjects:
+  - kind: ServiceAccount
+    name: kruize-sa
+    namespace: openshift-tuning
+roleRef:
+  kind: ClusterRole
+  name: instaslices-access
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kruize-edit-ko-binding
+subjects:
+  - kind: ServiceAccount
+    name: kruize-sa
+    namespace: openshift-tuning
+roleRef:
+  kind: ClusterRole
+  name: kruize-edit-ko
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -105,12 +207,14 @@ data:
       "savetodb": "true",
       "dbdriver": "jdbc:postgresql://",
       "plots": "true",
+      "isROSEnabled": "false",
       "local": "true",
       "logAllHttpReqAndResp": "true",
       "recommendationsURL" : "http://kruize.openshift-tuning.svc.cluster.local:8080/generateRecommendations?experiment_name=%s",
       "experimentsURL" : "http://kruize.openshift-tuning.svc.cluster.local:8080/createExperiment",
       "experimentNameFormat" : "%datasource%|%clustername%|%namespace%|%workloadname%(%workloadtype%)|%containername%",
       "bulkapilimit" : 1000,
+      "isKafkaEnabled" : "false",
       "hibernate": {
         "dialect": "org.hibernate.dialect.PostgreSQLDialect",
         "driver": "org.postgresql.Driver",
@@ -246,7 +350,7 @@ spec:
               done
       containers:
         - name: kruize
-          image: quay.io/kruize/autotune_operator:0.2
+          image: quay.io/kruize/autotune_operator:0.5
           imagePullPolicy: Always
           volumeMounts:
             - name: config-volume
@@ -262,12 +366,20 @@ spec:
               value: "/etc/config/kruizeconfigjson"
             - name: JAVA_TOOL_OPTIONS
               value: "-XX:MaxRAMPercentage=80"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kruize-kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
+            - name: KAFKA_TOPICS
+              value: "recommendations-topic,error-topic,summary-topic"
+            - name: KAFKA_RESPONSE_FILTER_INCLUDE
+              value: "experiments|status|apis|recommendations|response|status_history"
+            - name: KAFKA_RESPONSE_FILTER_EXCLUDE
+              value: ""
           resources:
             requests:
-              memory: "350Mi"
+              memory: "768Mi"
               cpu: "0.7"
             limits:
-              memory: "350Mi"
+              memory: "768Mi"
               cpu: "0.7"
           ports:
             - name: kruize-port
@@ -318,7 +430,7 @@ spec:
         spec:
           containers:
             - name: kruizecronjob
-              image: quay.io/kruize/autotune_operator:0.2
+              image: quay.io/kruize/autotune_operator:0.5
               imagePullPolicy: Always
               volumeMounts:
                 - name: config-volume
@@ -359,7 +471,7 @@ spec:
         spec:
           containers:
             - name: kruizedeletejob
-              image: quay.io/kruize/autotune_operator:0.2
+              image: quay.io/kruize/autotune_operator:0.5
               imagePullPolicy: Always
               volumeMounts:
                 - name: config-volume

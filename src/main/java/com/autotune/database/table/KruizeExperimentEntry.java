@@ -17,13 +17,11 @@ package com.autotune.database.table;
 
 import com.autotune.analyzer.utils.AnalyzerConstants;
 import com.autotune.database.helper.GenerateExperimentID;
-import com.autotune.utils.KruizeConstants;
+import com.autotune.database.table.lm.KruizeLMExperimentEntry;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.google.gson.annotations.SerializedName;
 import jakarta.persistence.*;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
-import java.util.List;
 
 /**
  * This is a Java class named KruizeExperimentEntry annotated with JPA annotations.
@@ -57,8 +55,6 @@ public class KruizeExperimentEntry {
     private String mode;
     private String target_cluster;
     private String performance_profile;
-    @Transient
-    private String experiment_type;
     @Enumerated(EnumType.STRING)
     private AnalyzerConstants.ExperimentStatus status;
     @JdbcTypeCode(SqlTypes.JSON)
@@ -70,6 +66,24 @@ public class KruizeExperimentEntry {
 
 //    TODO: update KruizeDSMetadataEntry
 
+
+    public KruizeExperimentEntry(KruizeLMExperimentEntry kruizeLMExperimentEntry) {
+        this.experiment_id = kruizeLMExperimentEntry.getExperiment_id();
+        this.version = kruizeLMExperimentEntry.getVersion();
+        this.experiment_name = kruizeLMExperimentEntry.getExperiment_name();
+        this.cluster_name = kruizeLMExperimentEntry.getCluster_name();
+        this.mode = kruizeLMExperimentEntry.getMode();
+        this.target_cluster = kruizeLMExperimentEntry.getTarget_cluster();
+        this.performance_profile = kruizeLMExperimentEntry.getPerformance_profile();
+        this.status = kruizeLMExperimentEntry.getStatus();
+        this.datasource = kruizeLMExperimentEntry.getDatasource();
+        this.extended_data = kruizeLMExperimentEntry.getExtended_data();
+        this.meta_data = kruizeLMExperimentEntry.getMeta_data();
+    }
+
+    public KruizeExperimentEntry() {
+        
+    }
 
     public String getVersion() {
         return version;
@@ -159,12 +173,5 @@ public class KruizeExperimentEntry {
         this.datasource = datasource;
     }
 
-    public String getExperimentType() {
-        return experiment_type;
-    }
-
-    public void setExperimentType(String experimentType) {
-        this.experiment_type = experimentType;
-    }
 
 }

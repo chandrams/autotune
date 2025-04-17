@@ -24,6 +24,10 @@ import com.autotune.common.data.ValidationOutputData;
 import com.autotune.database.helper.DBConstants;
 import com.autotune.database.init.KruizeHibernateUtil;
 import com.autotune.database.table.*;
+import com.autotune.database.table.lm.KruizeBulkJobEntry;
+import com.autotune.database.table.lm.KruizeLMExperimentEntry;
+import com.autotune.database.table.lm.KruizeLMMetadataProfileEntry;
+import com.autotune.database.table.lm.KruizeLMRecommendationEntry;
 import com.autotune.utils.KruizeConstants;
 import com.autotune.utils.MetricsConfig;
 import io.micrometer.core.instrument.Timer;
@@ -52,13 +56,14 @@ import static com.autotune.database.helper.DBConstants.DB_MESSAGES.DUPLICATE_KEY
 import static com.autotune.database.helper.DBConstants.DB_MESSAGES.DUPLICATE_KEY_ALT;
 import static com.autotune.database.helper.DBConstants.SQLQUERY.*;
 import static com.autotune.utils.KruizeConstants.JSONKeys.CLUSTER_NAME;
+import static com.autotune.utils.KruizeConstants.KRUIZE_BULK_API.*;
 
 public class ExperimentDAOImpl implements ExperimentDAO {
     private static final long serialVersionUID = 1L;
     private static final Logger LOGGER = LoggerFactory.getLogger(ExperimentDAOImpl.class);
 
     @Override
-    public ValidationOutputData addExperimentToDB(KruizeExperimentEntry kruizeExperimentEntry) {
+    public synchronized ValidationOutputData addExperimentToDB(KruizeExperimentEntry kruizeExperimentEntry) {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
         Transaction tx = null;
         String statusValue = "failure";
@@ -70,7 +75,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
                     session.persist(kruizeExperimentEntry);
                     tx.commit();
                     // TODO: remove native sql query and transient
-                    updateExperimentTypeInKruizeExperimentEntry(kruizeExperimentEntry);
+                    //updateExperimentTypeInKruizeExperimentEntry(kruizeExperimentEntry);  #Todo this function no more required and see if it can applied without using update sql
                     validationOutputData.setSuccess(true);
                     statusValue = "success";
                 } catch (HibernateException e) {
@@ -93,6 +98,45 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         }
         return validationOutputData;
     }
+
+    @Override
+    public ValidationOutputData addExperimentToDB(KruizeLMExperimentEntry kruizeLMExperimentEntry) {
+        ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
+        Transaction tx = null;
+        String statusValue = "failure";
+        Timer.Sample timerAddExpDB = Timer.start(MetricsConfig.meterRegistry());
+        try {
+            try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+                try {
+                    tx = session.beginTransaction();
+                    session.persist(kruizeLMExperimentEntry);
+                    tx.commit();
+                    // TODO: remove native sql query and transient
+                    //updateExperimentTypeInKruizeExperimentEntry(kruizeLMExperimentEntry);
+                    validationOutputData.setSuccess(true);
+                    statusValue = "success";
+                } catch (HibernateException e) {
+                    LOGGER.error("Not able to save experiment due to {}", e.getMessage());
+                    if (tx != null) tx.rollback();
+                    e.printStackTrace();
+                    validationOutputData.setSuccess(false);
+                    validationOutputData.setMessage(e.getMessage());
+                    //TODO: save error to API_ERROR_LOG
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.debug("kruizeLMExperimentEntry={}", kruizeLMExperimentEntry);
+            LOGGER.error("Not able to save experiment due to {}", e.getMessage());
+            validationOutputData.setMessage(e.getMessage());
+        } finally {
+            if (null != timerAddExpDB) {
+                MetricsConfig.timerAddExpDB = MetricsConfig.timerBAddExpDB.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerAddExpDB.stop(MetricsConfig.timerAddExpDB);
+            }
+        }
+        return validationOutputData;
+    }
+
 
     /**
      * Deletes database partitions based on a specified threshold day count.
@@ -344,9 +388,48 @@ public class ExperimentDAOImpl implements ExperimentDAO {
                     tx = session.beginTransaction();
                     session.persist(recommendationEntry);
                     tx.commit();
-                    if (null == recommendationEntry.getExperimentType() || recommendationEntry.getExperimentType().isEmpty()) {
-                        updateExperimentTypeInKruizeRecommendationEntry(recommendationEntry);
-                    }
+                    validationOutputData.setSuccess(true);
+                    statusValue = "success";
+                } else {
+                    tx = session.beginTransaction();
+                    existingRecommendationEntry.setExtended_data(recommendationEntry.getExtended_data());
+                    session.merge(existingRecommendationEntry);
+                    tx.commit();
+                    validationOutputData.setSuccess(true);
+                    statusValue = "success";
+                }
+            } catch (Exception e) {
+                LOGGER.error("Not able to save recommendation due to {}", e.getMessage());
+                if (tx != null) tx.rollback();
+                e.printStackTrace();
+                validationOutputData.setSuccess(false);
+                validationOutputData.setMessage(e.getMessage());
+                //todo save error to API_ERROR_LOG
+            }
+        } catch (Exception e) {
+            LOGGER.error("Not able to save recommendation due to {}", e.getMessage());
+        } finally {
+            if (null != timerAddRecDB) {
+                MetricsConfig.timerAddRecDB = MetricsConfig.timerBAddRecDB.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerAddRecDB.stop(MetricsConfig.timerAddRecDB);
+            }
+        }
+        return validationOutputData;
+    }
+
+    @Override
+    public ValidationOutputData addRecommendationToDB(KruizeLMRecommendationEntry recommendationEntry) {
+        ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
+        Transaction tx = null;
+        String statusValue = "failure";
+        Timer.Sample timerAddRecDB = Timer.start(MetricsConfig.meterRegistry());
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            try {
+                KruizeLMRecommendationEntry existingRecommendationEntry = loadLMRecommendationsByExperimentNameAndDate(recommendationEntry.getExperiment_name(), recommendationEntry.getCluster_name(), recommendationEntry.getInterval_end_time());
+                if (null == existingRecommendationEntry) {
+                    tx = session.beginTransaction();
+                    session.persist(recommendationEntry);
+                    tx.commit();
                     validationOutputData.setSuccess(true);
                     statusValue = "success";
                 } else {
@@ -443,6 +526,44 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     }
 
     /**
+     * Add MetadataProfile to database
+     *
+     * @param kruizeMetadataProfileEntry Metadata Profile Database object to be added
+     * @return validationOutputData contains the status of the DB insert operation
+     */
+    @Override
+    public ValidationOutputData addMetadataProfileToDB(KruizeLMMetadataProfileEntry kruizeMetadataProfileEntry) {
+        ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
+        String statusValue = "failure";
+        Timer.Sample timerAddMetadataProfileDB = Timer.start(MetricsConfig.meterRegistry());
+        Transaction tx = null;
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            try {
+                tx = session.beginTransaction();
+                session.persist(kruizeMetadataProfileEntry);
+                tx.commit();
+                validationOutputData.setSuccess(true);
+            } catch (HibernateException e) {
+                LOGGER.error("Not able to save metadata profile due to {}", e.getMessage());
+                if (tx != null) tx.rollback();
+                e.printStackTrace();
+                validationOutputData.setSuccess(false);
+                validationOutputData.setMessage(e.getMessage());
+            }
+        } catch (Exception e) {
+            LOGGER.error("Not able to save metadata profile source due to {}", e.getMessage());
+            validationOutputData.setMessage(e.getMessage());
+        } finally {
+            if (null != timerAddMetadataProfileDB) {
+                MetricsConfig.timerAddMetadataProfileDB = MetricsConfig.timerBAddMetadataProfileDB.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerAddMetadataProfileDB.stop(MetricsConfig.timerAddMetadataProfileDB);
+            }
+        }
+
+        return validationOutputData;
+    }
+
+    /**
      * @param kruizeDataSourceEntry
      * @param validationOutputData
      * @return validationOutputData contains the status of the DB insert operation
@@ -535,6 +656,150 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         return validationOutputData;
     }
 
+    /**
+     * Save/Update bulkJOB details into DB
+     *
+     * @param kruizeBulkJobEntry
+     * @return
+     */
+    @Override
+    public ValidationOutputData bulkJobSave(KruizeBulkJobEntry kruizeBulkJobEntry) {
+        ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
+        Transaction tx = null;
+        String statusValue = "failure";
+        Timer.Sample timerSaveBulkJobDB = Timer.start(MetricsConfig.meterRegistry());
+        try {
+            try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+                try {
+                    tx = session.beginTransaction();
+                    session.saveOrUpdate(kruizeBulkJobEntry);
+                    tx.commit();
+                    // TODO: remove native sql query and transient
+                    validationOutputData.setSuccess(true);
+                    statusValue = "success";
+                } catch (HibernateException e) {
+                    LOGGER.error(BULK_JOB_SAVE_ERROR, e.getMessage());
+                    if (tx != null) tx.rollback();
+                    e.printStackTrace();
+                    validationOutputData.setSuccess(false);
+                    validationOutputData.setMessage(e.getMessage());
+                    //TODO: save error to API_ERROR_LOG
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.error(BULK_JOB_SAVE_ERROR, e.getMessage());
+            validationOutputData.setMessage(e.getMessage());
+        } finally {
+            if (null != timerSaveBulkJobDB) {
+                MetricsConfig.timerSaveBulkJobDB = MetricsConfig.timerBSaveBulkJobDB.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerSaveBulkJobDB.stop(MetricsConfig.timerSaveBulkJobDB);
+            }
+        }
+        return validationOutputData;
+    }
+
+    /**
+     * Retrieves a {@link KruizeBulkJobEntry} object from the database based on the provided job ID.
+     *
+     * <p>This method queries the database for a bulk job using the given job ID. It also
+     * records metrics for performance monitoring and logs any errors encountered during retrieval.</p>
+     *
+     * @param jobId
+     * @return
+     * @throws Exception
+     */
+    @Override
+    public KruizeBulkJobEntry findBulkJobById(String jobId) throws Exception {
+        KruizeBulkJobEntry kruizeBulkJobEntry = null;
+        String statusValue = "failure";
+        Timer.Sample timerGetBulkJobDB = Timer.start(MetricsConfig.meterRegistry());
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            kruizeBulkJobEntry = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_BULKJOBS_BY_JOB_ID, KruizeBulkJobEntry.class)
+                    .setParameter("jobId", jobId).getSingleResult();
+            statusValue = "success";
+        } catch (NoResultException e) {
+            statusValue = "success";
+        } catch (Exception e) {
+            LOGGER.error(BULK_JOB_LOAD_ERROR, jobId, e.getMessage());
+            throw new Exception(e.getMessage());
+        } finally {
+            if (null != timerGetBulkJobDB) {
+                MetricsConfig.timerLoadBulkJobId = MetricsConfig.timerBLoadBulkJobId.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerGetBulkJobDB.stop(MetricsConfig.timerLoadBulkJobId);
+            }
+        }
+        return kruizeBulkJobEntry;
+    }
+
+    /**
+     * Updates the notification and recommendation fields of a bulk job for a specific experiment.
+     *
+     * <p>This method performs a partial update on a bulk job's JSON fields using the jsonb_set function
+     * in PostgreSQL. It updates the notification and recommendation data for a given experiment within
+     * the bulk job record.</p>
+     * <p>
+     * updateBulkJobByExperiment is an important function that is intended to be called frequently for each experiment per job_id.
+     * However,  avoid these frequent updates to the bulk job. Instead, we can leverage the kruize_lm_recommendations table
+     * to derive the status of each experiment. But kept this function as of now JIC if there is any need comes up for ACM usecase
+     * Current Flow:
+     * When Kruize receives a bulk request, an immediate entry is created in kruize_bulkjobs.
+     * A subsequent entry is added with total_experiments and metadata.
+     * A final update occurs once all experiments are completed, but not for every individual experiment.
+     * The kruize_lm_recommendations table contains an entry for each experiment.
+     * So only three calls to kruize_bulkjob table per bulk request
+     * By utilizing kruize_lm_recommendations, we can reduce the number of updates to kruize_bulkjobs.
+     * <p>Performance metrics are recorded, and any errors encountered during execution are logged.</p>
+     *
+     * @param jobId
+     * @param experimentName
+     * @param notification
+     * @param recommendationJson
+     * @return
+     * @throws Exception
+     */
+
+    @Override
+    public ValidationOutputData updateBulkJobByExperiment(String jobId, String experimentName, String notification, String recommendationJson) throws Exception {
+        ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
+        String statusValue = "failure";
+        Timer.Sample timerGetBulkJobDB = Timer.start(MetricsConfig.meterRegistry());
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            // Construct JSON paths for notification and recommendations fields
+            String notificationPath = "{experiments,\"" + experimentName + "\",notification}";
+            String recommendationPath = "{experiments,\"" + experimentName + "\",recommendations}";
+
+            // Native SQL query using jsonb_set for partial updates
+            String sql = UPDATE_BULKJOB_BY_ID;
+
+            // Execute the query
+            session.createNativeQuery(sql)
+                    .setParameter("notificationPath", notificationPath)
+                    .setParameter("newNotification", notification == null ? "null" : "\"" + notification + "\"") // Handle null value
+                    .setParameter("recommendationPath", recommendationPath)
+                    .setParameter("newRecommendation", recommendationJson)
+                    .setParameter("jobId", jobId)
+                    .executeUpdate();
+            validationOutputData.setSuccess(true);
+            statusValue = "success";
+        } catch (Exception e) {
+            LOGGER.error(BULK_JOB_LOAD_ERROR, jobId, e.getMessage());
+            validationOutputData.setMessage(e.getMessage());
+            throw new Exception(e.getMessage());
+        } finally {
+            if (null != timerGetBulkJobDB) {
+                MetricsConfig.timerUpdateBulkJobId = MetricsConfig.timerBUpdateBulkJobId.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerGetBulkJobDB.stop(MetricsConfig.timerLoadExpName);
+            }
+        }
+        return validationOutputData;
+    }
+
+    @Override
+    public void deleteBulkJobByID(String jobId) {
+        //todo
+    }
+
+
     @Override
     public boolean updateExperimentStatus(KruizeObject kruizeObject, AnalyzerConstants.ExperimentStatus status) {
         kruizeObject.setStatus(status);
@@ -574,6 +839,50 @@ public class ExperimentDAOImpl implements ExperimentDAO {
                     Query kruizeRecommendationEntryquery = session.createQuery(DELETE_FROM_RECOMMENDATIONS_BY_EXP_NAME, null);
                     kruizeRecommendationEntryquery.setParameter("experimentName", experimentName);
                     kruizeRecommendationEntryquery.executeUpdate();
+                    validationOutputData.setSuccess(true);
+                }
+                tx.commit();
+            } catch (HibernateException e) {
+                LOGGER.error("Not able to delete experiment {} due to {}", experimentName, e.getMessage());
+                if (tx != null) tx.rollback();
+                e.printStackTrace();
+                validationOutputData.setSuccess(false);
+                validationOutputData.setMessage(e.getMessage());
+                //todo save error to API_ERROR_LOG
+            }
+        } catch (Exception e) {
+            LOGGER.error("Not able to delete experiment {} due to {}", experimentName, e.getMessage());
+        }
+        return validationOutputData;
+    }
+
+
+    /**
+     * Delete an experiment with the name experimentName
+     * This deletes the experiment from two tables kruize_lm_experiments, kruize_recommendations
+     * Delete from kruize_recommendations only if delete from kruize_experiments succeeds.
+     *
+     * @param experimentName
+     * @return
+     */
+    @Override
+    public ValidationOutputData deleteKruizeLMExperimentEntryByName(String experimentName) {
+        ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
+        Transaction tx = null;
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            try {
+                tx = session.beginTransaction();
+                Query query = session.createQuery(DELETE_FROM_LM_EXPERIMENTS_BY_EXP_NAME, null);
+                query.setParameter("experimentName", experimentName);
+                int deletedCount = query.executeUpdate();
+                if (deletedCount == 0) {
+                    validationOutputData.setSuccess(false);
+                    validationOutputData.setMessage("KruizeLMExperimentEntry not found with experiment name: " + experimentName);
+                } else {
+                    // Remove the experiment from the Recommendations table
+                    Query kruizeLMRecommendationEntryquery = session.createQuery(DELETE_FROM_LM_RECOMMENDATIONS_BY_EXP_NAME, null);
+                    kruizeLMRecommendationEntryquery.setParameter("experimentName", experimentName);
+                    kruizeLMRecommendationEntryquery.executeUpdate();
                     validationOutputData.setSuccess(true);
                 }
                 tx.commit();
@@ -665,6 +974,46 @@ public class ExperimentDAOImpl implements ExperimentDAO {
             }
         } catch (Exception e) {
             LOGGER.error(AnalyzerErrorConstants.APIErrors.DeleteMetricProfileAPI.DELETE_METRIC_PROFILE_ENTRY_ERROR_MSG, metricProfileName, e.getMessage());
+            validationOutputData.setMessage(e.getMessage());
+        }
+        return validationOutputData;
+    }
+
+    /**
+     * Delete metadata profile with specified profile name
+     * This method deletes the metadata from the KruizeLMMetadataProfileEntry table
+     *
+     * @param metadataProfileName
+     * @return
+     */
+    @Override
+    public ValidationOutputData deleteKruizeLMMetadataProfileEntryByName(String metadataProfileName) {
+        ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
+        Transaction tx = null;
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            try {
+                tx = session.beginTransaction();
+                Query query = session.createQuery(DELETE_FROM_METADATA_PROFILE_BY_PROFILE_NAME, null);
+                query.setParameter(AnalyzerConstants.MetadataProfileConstants.METADATA_PROFILE_NAME_PARAMETER, metadataProfileName);
+                int deletedCount = query.executeUpdate();
+
+                if (deletedCount == 0) {
+                    validationOutputData.setSuccess(false);
+                    validationOutputData.setMessage(AnalyzerErrorConstants.APIErrors.DeleteMetadataProfileAPI.DELETE_METADATA_PROFILE_ENTRY_NOT_FOUND_WITH_NAME + metadataProfileName);
+                } else {
+                    validationOutputData.setSuccess(true);
+                }
+                tx.commit();
+            } catch (HibernateException e) {
+                LOGGER.error(AnalyzerErrorConstants.APIErrors.DeleteMetadataProfileAPI.DELETE_METADATA_PROFILE_ENTRY_ERROR_MSG, metadataProfileName, e.getMessage());
+                if (tx != null) tx.rollback();
+                e.printStackTrace();
+                validationOutputData.setSuccess(false);
+                validationOutputData.setMessage(e.getMessage());
+                //todo save error to API_ERROR_LOG
+            }
+        } catch (Exception e) {
+            LOGGER.error(AnalyzerErrorConstants.APIErrors.DeleteMetadataProfileAPI.DELETE_METADATA_PROFILE_ENTRY_ERROR_MSG, metadataProfileName, e.getMessage());
         }
         return validationOutputData;
     }
@@ -677,8 +1026,6 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         Timer.Sample timerLoadAllExp = Timer.start(MetricsConfig.meterRegistry());
         try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_EXPERIMENTS, KruizeExperimentEntry.class).list();
-            // TODO: remove native sql query and transient
-            getExperimentTypeInKruizeExperimentEntry(entries);
             statusValue = "success";
         } catch (Exception e) {
             LOGGER.error("Not able to load experiment due to {}", e.getMessage());
@@ -691,6 +1038,30 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         }
         return entries;
     }
+
+    @Override
+    public List<KruizeLMExperimentEntry> loadAllLMExperiments() throws Exception {
+        //todo load only experimentStatus=inprogress , playback may not require completed experiments
+        List<KruizeLMExperimentEntry> entries = null;
+        String statusValue = "failure";
+        Timer.Sample timerLoadAllExp = Timer.start(MetricsConfig.meterRegistry());
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_LM_EXPERIMENTS, KruizeLMExperimentEntry.class).list();
+            // TODO: remove native sql query and transient
+            //getExperimentTypeInKruizeExperimentEntry(entries);
+            statusValue = "success";
+        } catch (Exception e) {
+            LOGGER.error("Not able to load experiment due to {}", e.getMessage());
+            throw new Exception("Error while loading exsisting experiments from database due to : " + e.getMessage());
+        } finally {
+            if (null != timerLoadAllExp) {
+                MetricsConfig.timerLoadAllExp = MetricsConfig.timerBLoadAllExp.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerLoadAllExp.stop(MetricsConfig.timerLoadAllExp);
+            }
+        }
+        return entries;
+    }
+
 
     @Override
     public List<KruizeResultsEntry> loadAllResults() throws Exception {
@@ -723,6 +1094,35 @@ public class ExperimentDAOImpl implements ExperimentDAO {
             recommendationEntries = session.createQuery(
                     DBConstants.SQLQUERY.SELECT_FROM_RECOMMENDATIONS,
                     KruizeRecommendationEntry.class).list();
+            statusValue = "success";
+        } catch (Exception e) {
+            LOGGER.error("Not able to load recommendations due to {}", e.getMessage());
+            throw new Exception("Error while loading existing recommendations from database due to : " + e.getMessage());
+        } finally {
+            if (null != timerLoadAllRec) {
+                MetricsConfig.timerLoadAllRec = MetricsConfig.timerBLoadAllRec.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerLoadAllRec.stop(MetricsConfig.timerLoadAllRec);
+            }
+        }
+        return recommendationEntries;
+    }
+
+    @Override
+    public List<KruizeLMRecommendationEntry> loadAllLMRecommendations(String bulkJobId) throws Exception {
+        List<KruizeLMRecommendationEntry> recommendationEntries = null;
+        String statusValue = "failure";
+        Timer.Sample timerLoadAllRec = Timer.start(MetricsConfig.meterRegistry());
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            if (null != bulkJobId || bulkJobId != "") {
+                recommendationEntries = session.createQuery(SELECT_FROM_LM_RECOMMENDATIONS_BY_JOB_ID,
+                                KruizeLMRecommendationEntry.class)
+                        .setParameter(JOB_ID, bulkJobId)
+                        .list();
+            } else {
+                recommendationEntries = session.createQuery(
+                        DBConstants.SQLQUERY.SELECT_FROM_LM_RECOMMENDATIONS,
+                        KruizeLMRecommendationEntry.class).list();
+            }
             statusValue = "success";
         } catch (Exception e) {
             LOGGER.error("Not able to load recommendations due to {}", e.getMessage());
@@ -775,6 +1175,57 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         return entries;
     }
 
+    /**
+     * Fetches all the Metadata Profile records from KruizeLMMetadataProfileEntry database table
+     *
+     * @return List of all KruizeLMMetadataProfileEntry database objects
+     * @throws Exception
+     */
+    @Override
+    public List<KruizeLMMetadataProfileEntry> loadAllMetadataProfiles() throws Exception {
+        String statusValue = "failure";
+        Timer.Sample timerLoadAllMetadataProfiles = Timer.start(MetricsConfig.meterRegistry());
+
+        List<KruizeLMMetadataProfileEntry> entries = null;
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_METADATA_PROFILE, KruizeLMMetadataProfileEntry.class).list();
+        } catch (Exception e) {
+            LOGGER.error("Not able to load Metadata Profile  due to {}", e.getMessage());
+            throw new Exception("Error while loading existing Metadata Profile from database due to : " + e.getMessage());
+        } finally {
+            if (null != timerLoadAllMetadataProfiles) {
+                MetricsConfig.timerLoadAllMetadataProfiles = MetricsConfig.timerBLoadAllMetadataProfiles.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerLoadAllMetadataProfiles.stop(MetricsConfig.timerLoadAllMetadataProfiles);
+            }
+        }
+        return entries;
+    }
+
+    @Override
+    public List<KruizeLMExperimentEntry> loadLMExperimentByName(String experimentName) throws Exception {
+        //todo load only experimentStatus=inprogress , playback may not require completed experiments
+        List<KruizeLMExperimentEntry> entries = null;
+        String statusValue = "failure";
+        Timer.Sample timerLoadExpName = Timer.start(MetricsConfig.meterRegistry());
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_LM_EXPERIMENTS_BY_EXP_NAME, KruizeLMExperimentEntry.class)
+                    .setParameter("experimentName", experimentName).list();
+            // TODO: remove native sql query and transient
+            //getExperimentTypeInKruizeExperimentEntry(entries);
+            statusValue = "success";
+        } catch (Exception e) {
+            LOGGER.error("Not able to load experiment {} due to {}", experimentName, e.getMessage());
+            throw new Exception("Error while loading existing experiment from database due to : " + e.getMessage());
+        } finally {
+            if (null != timerLoadExpName) {
+                MetricsConfig.timerLoadExpName = MetricsConfig.timerBLoadExpName.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerLoadExpName.stop(MetricsConfig.timerLoadExpName);
+            }
+
+        }
+        return entries;
+    }
+
     @Override
     public List<KruizeExperimentEntry> loadExperimentByName(String experimentName) throws Exception {
         //todo load only experimentStatus=inprogress , playback may not require completed experiments
@@ -785,7 +1236,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_EXPERIMENTS_BY_EXP_NAME, KruizeExperimentEntry.class)
                     .setParameter("experimentName", experimentName).list();
             // TODO: remove native sql query and transient
-            getExperimentTypeInKruizeExperimentEntry(entries);
+            //getExperimentTypeInKruizeExperimentEntry(entries);
             statusValue = "success";
         } catch (Exception e) {
             LOGGER.error("Not able to load experiment {} due to {}", experimentName, e.getMessage());
@@ -816,6 +1267,38 @@ public class ExperimentDAOImpl implements ExperimentDAO {
             ContainerAPIObject containerAPIObject = kubernetesAPIObject.getContainerAPIObjects().get(0);
             // Set parameters for KubernetesObject and Container
             Query<KruizeExperimentEntry> query = session.createNativeQuery(SELECT_FROM_EXPERIMENTS_BY_INPUT_JSON, KruizeExperimentEntry.class);
+            query.setParameter(CLUSTER_NAME, clusterName.toString());
+            query.setParameter(KruizeConstants.JSONKeys.NAME, kubernetesAPIObject.getName());
+            query.setParameter(KruizeConstants.JSONKeys.NAMESPACE, kubernetesAPIObject.getNamespace());
+            query.setParameter(KruizeConstants.JSONKeys.TYPE, kubernetesAPIObject.getType());
+            query.setParameter(KruizeConstants.JSONKeys.CONTAINER_NAME, containerAPIObject.getContainer_name());
+            query.setParameter(KruizeConstants.JSONKeys.CONTAINER_IMAGE_NAME, containerAPIObject.getContainer_image_name());
+
+            entries = query.getResultList();
+            statusValue = "success";
+        } catch (Exception e) {
+            LOGGER.error("Error fetching experiment data: {}", e.getMessage());
+            throw new Exception("Error while fetching experiment data from database: " + e.getMessage());
+        } finally {
+            if (null != timerLoadExpName) {
+                MetricsConfig.timerLoadExpName = MetricsConfig.timerBLoadExpName.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerLoadExpName.stop(MetricsConfig.timerLoadExpName);
+            }
+        }
+        return entries;
+    }
+
+    @Override
+    public List<KruizeLMExperimentEntry> loadLMExperimentFromDBByInputJSON(StringBuilder clusterName, KubernetesAPIObject kubernetesAPIObject) throws Exception {
+        //todo load only experimentStatus=inprogress , playback may not require completed experiments
+        List<KruizeLMExperimentEntry> entries;
+        String statusValue = "failure";
+        Timer.Sample timerLoadExpName = Timer.start(MetricsConfig.meterRegistry());
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            // assuming there will be only one container
+            ContainerAPIObject containerAPIObject = kubernetesAPIObject.getContainerAPIObjects().get(0);
+            // Set parameters for KubernetesObject and Container
+            Query<KruizeLMExperimentEntry> query = session.createNativeQuery(SELECT_FROM_LM_EXPERIMENTS_BY_INPUT_JSON, KruizeLMExperimentEntry.class);
             query.setParameter(CLUSTER_NAME, clusterName.toString());
             query.setParameter(KruizeConstants.JSONKeys.NAME, kubernetesAPIObject.getName());
             query.setParameter(KruizeConstants.JSONKeys.NAMESPACE, kubernetesAPIObject.getNamespace());
@@ -885,7 +1368,34 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
             recommendationEntries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_RECOMMENDATIONS_BY_EXP_NAME, KruizeRecommendationEntry.class)
                     .setParameter("experimentName", experimentName).list();
-            getExperimentTypeInKruizeRecommendationsEntry(recommendationEntries);
+            statusValue = "success";
+        } catch (Exception e) {
+            LOGGER.error("Not able to load recommendations due to {}", e.getMessage());
+            throw new Exception("Error while loading existing recommendations from database due to : " + e.getMessage());
+        } finally {
+            if (null != timerLoadRecExpName) {
+                MetricsConfig.timerLoadRecExpName = MetricsConfig.timerBLoadRecExpName.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerLoadRecExpName.stop(MetricsConfig.timerLoadRecExpName);
+            }
+        }
+        return recommendationEntries;
+    }
+
+    @Override
+    public List<KruizeLMRecommendationEntry> loadLMRecommendationsByExperimentName(String experimentName, String bulkJobId) throws Exception {
+        List<KruizeLMRecommendationEntry> recommendationEntries = null;
+        String statusValue = "failure";
+        Timer.Sample timerLoadRecExpName = Timer.start(MetricsConfig.meterRegistry());
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            if (null != bulkJobId) {
+                recommendationEntries = session.createQuery(SELECT_FROM_LM_RECOMMENDATIONS_BY_EXP_NAME_BY_JOB_ID, KruizeLMRecommendationEntry.class)
+                        .setParameter("experimentName", experimentName)
+                        .setParameter(JOB_ID, bulkJobId)
+                        .list();
+            } else {
+                recommendationEntries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_LM_RECOMMENDATIONS_BY_EXP_NAME, KruizeLMRecommendationEntry.class)
+                        .setParameter("experimentName", experimentName).list();
+            }
             statusValue = "success";
         } catch (Exception e) {
             LOGGER.error("Not able to load recommendations due to {}", e.getMessage());
@@ -917,10 +1427,43 @@ public class ExperimentDAOImpl implements ExperimentDAO {
             if (cluster_name != null)
                 kruizeRecommendationEntryQuery.setParameter(CLUSTER_NAME, cluster_name);
             recommendationEntries = kruizeRecommendationEntryQuery.getSingleResult();
-            getExperimentTypeInSingleKruizeRecommendationsEntry(recommendationEntries);
             statusValue = "success";
         } catch (NoResultException e) {
             LOGGER.debug("Generating new recommendation for Experiment name : %s interval_end_time: %S", experimentName, interval_end_time);
+        } catch (Exception e) {
+            LOGGER.error("Not able to load recommendations due to {}", e.getMessage());
+            recommendationEntries = null;
+            throw new Exception("Error while loading existing recommendations from database due to : " + e.getMessage());
+        } finally {
+            if (null != timerLoadRecExpNameDate) {
+                MetricsConfig.timerLoadRecExpNameDate = MetricsConfig.timerBLoadRecExpNameDate.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerLoadRecExpNameDate.stop(MetricsConfig.timerLoadRecExpNameDate);
+            }
+        }
+        return recommendationEntries;
+    }
+
+    @Override
+    public KruizeLMRecommendationEntry loadLMRecommendationsByExperimentNameAndDate(String experimentName, String cluster_name, Timestamp interval_end_time) throws Exception {
+        KruizeLMRecommendationEntry recommendationEntries = null;
+        String statusValue = "failure";
+        String clusterCondtionSql = "";
+        if (cluster_name != null)
+            clusterCondtionSql = String.format(" and k.%s = :%s ", KruizeConstants.JSONKeys.CLUSTER_NAME, KruizeConstants.JSONKeys.CLUSTER_NAME);
+        else
+            clusterCondtionSql = String.format(" and k.%s is null ", KruizeConstants.JSONKeys.CLUSTER_NAME);
+
+        Timer.Sample timerLoadRecExpNameDate = Timer.start(MetricsConfig.meterRegistry());
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            Query<KruizeLMRecommendationEntry> kruizeRecommendationEntryQuery = session.createQuery(SELECT_FROM_LM_RECOMMENDATIONS_BY_EXP_NAME_AND_END_TIME + clusterCondtionSql, KruizeLMRecommendationEntry.class)
+                    .setParameter(KruizeConstants.JSONKeys.EXPERIMENT_NAME, experimentName)
+                    .setParameter(KruizeConstants.JSONKeys.INTERVAL_END_TIME, interval_end_time);
+            if (cluster_name != null)
+                kruizeRecommendationEntryQuery.setParameter(CLUSTER_NAME, cluster_name);
+            recommendationEntries = kruizeRecommendationEntryQuery.getSingleResult();
+            statusValue = "success";
+        } catch (NoResultException e) {
+            LOGGER.debug("Generating new recommendation for Experiment name : {} interval_end_time: {}", experimentName, interval_end_time);
         } catch (Exception e) {
             LOGGER.error("Not able to load recommendations due to {}", e.getMessage());
             recommendationEntries = null;
@@ -971,6 +1514,32 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         } catch (Exception e) {
             LOGGER.error("Not able to load Metric Profile {} due to {}", metricProfileName, e.getMessage());
             throw new Exception("Error while loading existing metric profile from database due to : " + e.getMessage());
+        }
+        return entries;
+    }
+
+    /**
+     * Fetches Metadata Profile by name from KruizeLMMetadataProfileEntry database table
+     *
+     * @param metadataProfileName Metadata profile name
+     * @return List of KruizeLMMetadataProfileEntry objects
+     * @throws Exception
+     */
+    public List<KruizeLMMetadataProfileEntry> loadMetadataProfileByName(String metadataProfileName) throws Exception {
+        String statusValue = "failure";
+        Timer.Sample timerLoadMetadataProfileName = Timer.start(MetricsConfig.meterRegistry());
+        List<KruizeLMMetadataProfileEntry> entries = null;
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_METADATA_PROFILE_BY_NAME, KruizeLMMetadataProfileEntry.class)
+                    .setParameter("name", metadataProfileName).list();
+        } catch (Exception e) {
+            LOGGER.error("Not able to load Metadata Profile {} due to {}", metadataProfileName, e.getMessage());
+            throw new Exception("Error while loading existing metadata profile from database due to : " + e.getMessage());
+        } finally {
+            if (null != timerLoadMetadataProfileName) {
+                MetricsConfig.timerLoadMetadataProfileName = MetricsConfig.timerBLoadMetadataProfileName.tag("status", statusValue).register(MetricsConfig.meterRegistry());
+                timerLoadMetadataProfileName.stop(MetricsConfig.timerLoadMetadataProfileName);
+            }
         }
         return entries;
     }
@@ -1123,11 +1692,11 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         return entries;
     }
 
-    private void getExperimentTypeInKruizeExperimentEntry(List<KruizeExperimentEntry> entries) throws Exception {
+   /* private void getExperimentTypeInKruizeExperimentEntry(List<KruizeExperimentEntry> entries) throws Exception {
         try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
             for (KruizeExperimentEntry entry : entries) {
                 if (isTargetCluserLocal(entry.getTarget_cluster())) {
-                    if (null == entry.getExperimentType() || entry.getExperimentType().isEmpty()) {
+                    if (null == entry.getE || entry.getExperimentType().isEmpty()) {
                         String sql = DBConstants.SQLQUERY.SELECT_EXPERIMENT_EXP_TYPE;
                         Query query = session.createNativeQuery(sql);
                         query.setParameter("experiment_id", entry.getExperiment_id());
@@ -1141,6 +1710,23 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         } catch (Exception e) {
             LOGGER.error("Not able to get experiment type from experiment entry due to {}", e.getMessage());
             throw new Exception("Error while loading experiment type from database due to : " + e.getMessage());
+        }
+    }*/
+
+    /*private void updateExperimentTypeInKruizeExperimentEntry(KruizeLMExperimentEntry kruizeLMExperimentEntry) throws Exception {
+        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            if (isTargetCluserLocal(kruizeLMExperimentEntry.getTarget_cluster())) {
+                Transaction tx = session.beginTransaction();
+                String sql = DBConstants.SQLQUERY.UPDATE_EXPERIMENT_EXP_TYPE;
+                Query query = session.createNativeQuery(sql);
+                query.setParameter("experiment_type", kruizeLMExperimentEntry.getExperimentType());
+                query.setParameter("experiment_name", kruizeLMExperimentEntry.getExperiment_name());
+                query.executeUpdate();
+                tx.commit();
+            }
+        } catch (Exception e) {
+            LOGGER.error("Not able to update experiment type in experiment entry due to {}", e.getMessage());
+            throw new Exception("Error while updating experiment type to database due to : " + e.getMessage());
         }
     }
 
@@ -1159,55 +1745,14 @@ public class ExperimentDAOImpl implements ExperimentDAO {
             LOGGER.error("Not able to update experiment type in experiment entry due to {}", e.getMessage());
             throw new Exception("Error while updating experiment type to database due to : " + e.getMessage());
         }
-    }
+    }*/
 
-    private void getExperimentTypeInKruizeRecommendationsEntry(List<KruizeRecommendationEntry> entries) throws Exception {
-        for (KruizeRecommendationEntry recomEntry : entries) {
-            getExperimentTypeInSingleKruizeRecommendationsEntry(recomEntry);
-        }
-    }
 
     private void getExperimentTypeInSingleKruizeRecommendationsEntry(KruizeRecommendationEntry recomEntry) throws Exception {
         List<KruizeExperimentEntry> expEntries = loadExperimentByName(recomEntry.getExperiment_name());
-        if (null != expEntries && !expEntries.isEmpty()) {
-            if (isTargetCluserLocal(expEntries.get(0).getTarget_cluster())) {
-                try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
-                    String sql = DBConstants.SQLQUERY.SELECT_RECOMMENDATIONS_EXP_TYPE;
-                    Query query = session.createNativeQuery(sql);
-                    // set experiment_type parameter in sql query
-                    query.setParameter("experiment_name", recomEntry.getExperiment_name());
-                    List<String> exType = query.getResultList();
-                    if (null != exType && !exType.isEmpty()) {
-                        recomEntry.setExperimentType(exType.get(0));
-                    }
-                } catch (Exception e) {
-                    LOGGER.error("Not able to get experiment type in recommendation entry due to {}", e.getMessage());
-                    throw new Exception("Error while updating experiment type to recommendation due to : " + e.getMessage());
-                }
-            }
-        }
+
     }
 
-    private void updateExperimentTypeInKruizeRecommendationEntry(KruizeRecommendationEntry recommendationEntry) throws Exception {
-        List<KruizeExperimentEntry> entries = loadExperimentByName(recommendationEntry.getExperiment_name());
-        if (null != entries && !entries.isEmpty()) {
-            if (isTargetCluserLocal(entries.get(0).getTarget_cluster())) {
-                try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
-                    Transaction tx = session.beginTransaction();
-                    String sql = DBConstants.SQLQUERY.UPDATE_RECOMMENDATIONS_EXP_TYPE;
-                    Query query = session.createNativeQuery(sql);
-                    query.setParameter("experiment_type", recommendationEntry.getExperimentType());
-                    query.setParameter("experiment_name", recommendationEntry.getExperiment_name());
-                    query.setParameter("interval_end_time", recommendationEntry.getInterval_end_time());
-                    query.executeUpdate();
-                    tx.commit();
-                } catch (Exception e) {
-                    LOGGER.error("Not able to update experiment type in recommendation entry due to {}", e.getMessage());
-                    throw new Exception("Error while updating experiment type to recommendation due to : " + e.getMessage());
-                }
-            }
-        }
-    }
 
     private boolean isTargetCluserLocal(String targetCluster) {
         if (AnalyzerConstants.LOCAL.equalsIgnoreCase(targetCluster)) {

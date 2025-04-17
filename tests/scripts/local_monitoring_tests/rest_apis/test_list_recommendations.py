@@ -19,6 +19,7 @@ import time
 
 import pytest
 import sys
+
 sys.path.append("../../")
 
 from helpers.all_terms_list_reco_json_schema import all_terms_list_reco_json_schema
@@ -37,19 +38,22 @@ from helpers.short_and_medium_term_list_reco_json_schema import short_and_medium
 from helpers.short_term_list_reco_json_schema import short_term_list_reco_json_schema
 from helpers.utils import *
 from jinja2 import Environment, FileSystemLoader
+from helpers.list_metadata_profiles_validate import *
+from helpers.list_metadata_profiles_schema import *
 
 
 metric_profile_dir = get_metric_profile_dir()
+metadata_profile_dir = get_metadata_profile_dir()
 
 @pytest.mark.sanity
-@pytest.mark.parametrize("test_name, expected_status_code, version, experiment_name, cluster_name, performance_profile, mode, target_cluster, datasource, experiment_type, kubernetes_obj_type, name, namespace, namespace_name, container_image_name, container_name, measurement_duration, threshold",
+@pytest.mark.parametrize("test_name, expected_status_code, version, experiment_name, cluster_name, performance_profile, metadata_profile, mode, target_cluster, datasource, experiment_type, kubernetes_obj_type, name, namespace, namespace_name, container_image_name, container_name, measurement_duration, threshold",
     [
-        ("list_reco_default_cluster1", SUCCESS_STATUS_CODE, "v2.0", "test-default-ns", "cluster-1", "resource-optimization-local-monitoring", "monitor", "local", "prometheus-1", "namespace", None, None, None, "default", None, None, "15min", "0.1"),
-        ("list_reco_default_cluster2", SUCCESS_STATUS_CODE, "v2.0", "test-default-ns", "cluster-2", "resource-optimization-local-monitoring", "monitor", "local", "prometheus-1", "namespace", None, None, None, "default", None, None, "15min", "0.1")
+        ("list_reco_default_cluster1", SUCCESS_STATUS_CODE, "v2.0", "test-default-ns", "cluster-1", "resource-optimization-local-monitoring", "cluster-metadata-local-monitoring", "monitor", "local", "prometheus-1", "namespace", None, None, None, "default", None, None, "15min", "0.1"),
+        ("list_reco_default_cluster2", SUCCESS_STATUS_CODE, "v2.0", "test-default-ns", "cluster-2", "resource-optimization-local-monitoring", "cluster-metadata-local-monitoring", "monitor", "local", "prometheus-1", "namespace", None, None, None, "default", None, None, "15min", "0.1")
     ]
 )
-def test_list_recommendations_namespace_single_result(test_name, expected_status_code, version, experiment_name, cluster_name, performance_profile, mode, target_cluster, datasource, experiment_type, kubernetes_obj_type, name, namespace, namespace_name, container_image_name, container_name, measurement_duration, threshold, cluster_type):
-    """
+def test_list_recommendations_namespace_single_result(test_name, expected_status_code, version, experiment_name, cluster_name, performance_profile, metadata_profile, mode, target_cluster, datasource, experiment_type, kubernetes_obj_type, name, namespace, namespace_name, container_image_name, container_name, measurement_duration, threshold, cluster_type):
+    """test_list_recommendations_namespace_single_result
     Test Description: This test validates listRecommendations by passing a valid
     namespace experiment name
     """
@@ -67,6 +71,7 @@ def test_list_recommendations_namespace_single_result(test_name, expected_status
         experiment_name=experiment_name,
         cluster_name=cluster_name,
         performance_profile=performance_profile,
+        metadata_profile=metadata_profile,
         mode=mode,
         target_cluster=target_cluster,
         datasource=datasource,
@@ -100,7 +105,7 @@ def test_list_recommendations_namespace_single_result(test_name, expected_status
     input_json_file = tmp_json_file
 
     form_kruize_url(cluster_type)
-    response = delete_experiment(input_json_file)
+    response = delete_experiment(input_json_file, rm=False)
     print("delete exp = ", response.status_code)
 
     #Install default metric profile
@@ -134,6 +139,34 @@ def test_list_recommendations_namespace_single_result(test_name, expected_status
 
     # Validate the json against the json schema
     errorMsg = validate_list_metric_profiles_json(metric_profile_json, list_metric_profiles_schema)
+    assert errorMsg == ""
+
+    # Install metadata profile
+    metadata_profile_json_file = metadata_profile_dir / 'cluster_metadata_local_monitoring.json'
+    json_data = json.load(open(metadata_profile_json_file))
+    metadata_profile_name = json_data['metadata']['name']
+
+    response = delete_metadata_profile(metadata_profile_name)
+    print("delete metadata profile = ", response.status_code)
+
+    # Create metadata profile using the specified json
+    response = create_metadata_profile(metadata_profile_json_file)
+
+    data = response.json()
+    print(data['message'])
+
+    assert response.status_code == SUCCESS_STATUS_CODE
+    assert data['status'] == SUCCESS_STATUS
+
+    assert data['message'] == CREATE_METADATA_PROFILE_SUCCESS_MSG % metadata_profile_name
+
+    response = list_metadata_profiles(name=metadata_profile_name, logging=False)
+    metadata_profile_json = response.json()
+
+    assert response.status_code == SUCCESS_200_STATUS_CODE
+
+    # Validate the json against the json schema
+    errorMsg = validate_list_metadata_profiles_json(metadata_profile_json, list_metadata_profiles_schema)
     assert errorMsg == ""
 
     # Create namespace experiment using the specified json
@@ -169,15 +202,15 @@ def test_list_recommendations_namespace_single_result(test_name, expected_status
     validate_local_monitoring_reco_json(namespace_exp_json[0], list_reco_json[0])
 
     # Delete experiment
-    response = delete_experiment(input_json_file)
+    response = delete_experiment(input_json_file, rm=False)
     print("delete exp = ", response.status_code)
     assert response.status_code == SUCCESS_STATUS_CODE
 
 @pytest.mark.sanity
 @pytest.mark.parametrize(
-    "test_name, expected_status_code, version, experiment_name, cluster_name, performance_profile, mode, target_cluster, datasource, experiment_type, kubernetes_obj_type, name, namespace, namespace_name, container_image_name, container_name, measurement_duration, threshold",
+    "test_name, expected_status_code, version, experiment_name, cluster_name, performance_profile, metadata_profile, mode, target_cluster, datasource, experiment_type, kubernetes_obj_type, name, namespace, namespace_name, container_image_name, container_name, measurement_duration, threshold",
                          [
-                             ("list_accelerator_recommendations", SUCCESS_STATUS_CODE, "v2.0", "human_eval_exp", "cluster-1", "resource-optimization-local-monitoring", "monitor", "local", "prometheus-1", "container", "statefulset", "human-eval-benchmark", "unpartitioned", None, None, "human-eval-benchmark", "15min", "0.1"),
+                             ("list_accelerator_recommendations", SUCCESS_STATUS_CODE, "v2.0", "human_eval_exp", "cluster-1", "resource-optimization-local-monitoring", "cluster-metadata-local-monitoring", "monitor", "local", "prometheus-1", "container", "statefulset", "human-eval-benchmark", "unpartitioned", None, None, "human-eval-benchmark", "15min", "0.1"),
                          ]
                          )
 def test_accelerator_recommendation_if_exists(
@@ -187,6 +220,7 @@ def test_accelerator_recommendation_if_exists(
         experiment_name,
         cluster_name,
         performance_profile,
+        metadata_profile,
         mode,
         target_cluster,
         datasource,
@@ -218,6 +252,7 @@ def test_accelerator_recommendation_if_exists(
         experiment_name=experiment_name,
         cluster_name=cluster_name,
         performance_profile=performance_profile,
+        metadata_profile=metadata_profile,
         mode=mode,
         target_cluster=target_cluster,
         datasource=datasource,
@@ -249,7 +284,7 @@ def test_accelerator_recommendation_if_exists(
     input_json_file = tmp_json_file
 
     form_kruize_url(cluster_type)
-    response = delete_experiment(input_json_file)
+    response = delete_experiment(input_json_file, rm=False)
     print("delete exp = ", response.status_code)
 
     #Install default metric profile
@@ -285,6 +320,34 @@ def test_accelerator_recommendation_if_exists(
     errorMsg = validate_list_metric_profiles_json(metric_profile_json, list_metric_profiles_schema)
     assert errorMsg == ""
 
+    # Install metadata profile
+    metadata_profile_json_file = metadata_profile_dir / 'cluster_metadata_local_monitoring.json'
+    json_data = json.load(open(metadata_profile_json_file))
+    metadata_profile_name = json_data['metadata']['name']
+
+    response = delete_metadata_profile(metadata_profile_name)
+    print("delete metadata profile = ", response.status_code)
+
+    # Create metadata profile using the specified json
+    response = create_metadata_profile(metadata_profile_json_file)
+
+    data = response.json()
+    print(data['message'])
+
+    assert response.status_code == SUCCESS_STATUS_CODE
+    assert data['status'] == SUCCESS_STATUS
+
+    assert data['message'] == CREATE_METADATA_PROFILE_SUCCESS_MSG % metadata_profile_name
+
+    response = list_metadata_profiles(name=metadata_profile_name, logging=False)
+    metadata_profile_json = response.json()
+
+    assert response.status_code == SUCCESS_200_STATUS_CODE
+
+    # Validate the json against the json schema
+    errorMsg = validate_list_metadata_profiles_json(metadata_profile_json, list_metadata_profiles_schema)
+    assert errorMsg == ""
+
     # Create namespace experiment using the specified json
     response = create_experiment(input_json_file)
 
@@ -316,6 +379,6 @@ def test_accelerator_recommendation_if_exists(
     validate_accelerator_recommendations_for_container(list_reco_json)
 
     # Delete experiment
-    response = delete_experiment(input_json_file)
+    response = delete_experiment(input_json_file, rm=False)
     print("delete exp = ", response.status_code)
     assert response.status_code == SUCCESS_STATUS_CODE

@@ -6,7 +6,16 @@ public class DBConstants {
 
     public static final class SQLQUERY {
         public static final String SELECT_FROM_EXPERIMENTS = "from KruizeExperimentEntry";
+        public static final String SELECT_FROM_LM_EXPERIMENTS = "from KruizeLMExperimentEntry";
         public static final String SELECT_FROM_EXPERIMENTS_BY_EXP_NAME = "from KruizeExperimentEntry k WHERE k.experiment_name = :experimentName";
+        public static final String SELECT_FROM_LM_EXPERIMENTS_BY_EXP_NAME = "from KruizeLMExperimentEntry k WHERE k.experiment_name = :experimentName";
+        public static final String SELECT_FROM_BULKJOBS_BY_JOB_ID = "from KruizeBulkJobEntry k WHERE k.jobId = :jobId";
+        public static final String UPDATE_BULKJOB_BY_ID = "UPDATE kruize_bulkjobs " +
+                "SET experiments = jsonb_set(" +
+                "    jsonb_set(experiments, :notificationPath, :newNotification::jsonb, true), " +
+                "    :recommendationPath, :newRecommendation::jsonb, true" +
+                ") " +
+                "WHERE job_id = :jobId";
         public static final String SELECT_FROM_RESULTS = "from KruizeResultsEntry";
         public static final String SELECT_FROM_RESULTS_BY_EXP_NAME = "from KruizeResultsEntry k WHERE k.experiment_name = :experimentName";
         public static final String SELECT_FROM_DATASOURCE = "from KruizeDataSourceEntry";
@@ -49,21 +58,38 @@ public class DBConstants {
                         "k.interval_end_time = (SELECT MAX(e.interval_end_time) FROM KruizeResultsEntry e  where e.experiment_name = :%s ) ",
                 KruizeConstants.JSONKeys.EXPERIMENT_NAME, KruizeConstants.JSONKeys.EXPERIMENT_NAME);
         public static final String SELECT_FROM_RECOMMENDATIONS_BY_EXP_NAME = String.format("from KruizeRecommendationEntry k WHERE k.experiment_name = :experimentName");
+        public static final String SELECT_FROM_LM_RECOMMENDATIONS_BY_EXP_NAME = String.format("from KruizeLMRecommendationEntry k WHERE k.experiment_name = :experimentName");
+        public static final String SELECT_FROM_LM_RECOMMENDATIONS_BY_EXP_NAME_BY_JOB_ID =
+                String.format(
+                        "from KruizeLMRecommendationEntry k WHERE k.experiment_name = :experimentName " +
+                                "AND function('jsonb_extract_path_text', extended_data, 'job_id') = :job_id");
         public static final String SELECT_FROM_RECOMMENDATIONS_BY_EXP_NAME_AND_END_TIME = String.format(
                 "from KruizeRecommendationEntry k WHERE " +
                         "k.experiment_name = :%s and " +
                         "k.interval_end_time= :%s ",
                 KruizeConstants.JSONKeys.EXPERIMENT_NAME, KruizeConstants.JSONKeys.INTERVAL_END_TIME);
+        public static final String SELECT_FROM_LM_RECOMMENDATIONS_BY_EXP_NAME_AND_END_TIME = String.format(
+                "from KruizeLMRecommendationEntry k WHERE " +
+                        "k.experiment_name = :%s and " +
+                        "k.interval_end_time= :%s ",
+                KruizeConstants.JSONKeys.EXPERIMENT_NAME, KruizeConstants.JSONKeys.INTERVAL_END_TIME);
         public static final String SELECT_FROM_RECOMMENDATIONS = "from KruizeRecommendationEntry";
+        public static final String SELECT_FROM_LM_RECOMMENDATIONS = "from KruizeLMRecommendationEntry";
+        public static final String SELECT_FROM_LM_RECOMMENDATIONS_BY_JOB_ID = "from KruizeLMRecommendationEntry where function('jsonb_extract_path_text', extended_data, 'job_id') = :job_id";
         public static final String SELECT_FROM_PERFORMANCE_PROFILE = "from KruizePerformanceProfileEntry";
         public static final String SELECT_FROM_PERFORMANCE_PROFILE_BY_NAME = "from KruizePerformanceProfileEntry k WHERE k.name = :name";
         public static final String SELECT_FROM_METRIC_PROFILE = "from KruizeMetricProfileEntry";
         public static final String SELECT_FROM_METRIC_PROFILE_BY_NAME = "from KruizeMetricProfileEntry k WHERE k.name = :name";
+        public static final String SELECT_FROM_METADATA_PROFILE = "from KruizeLMMetadataProfileEntry";
+        public static final String SELECT_FROM_METADATA_PROFILE_BY_NAME = "from KruizeLMMetadataProfileEntry k WHERE k.name = :name";
         public static final String DELETE_FROM_EXPERIMENTS_BY_EXP_NAME = "DELETE FROM KruizeExperimentEntry k WHERE k.experiment_name = :experimentName";
+        public static final String DELETE_FROM_LM_EXPERIMENTS_BY_EXP_NAME = "DELETE FROM KruizeLMExperimentEntry k WHERE k.experiment_name = :experimentName";
         public static final String DELETE_FROM_RESULTS_BY_EXP_NAME = "DELETE FROM KruizeResultsEntry k WHERE k.experiment_name = :experimentName";
         public static final String DELETE_FROM_RECOMMENDATIONS_BY_EXP_NAME = "DELETE FROM KruizeRecommendationEntry k WHERE k.experiment_name = :experimentName";
+        public static final String DELETE_FROM_LM_RECOMMENDATIONS_BY_EXP_NAME = "DELETE FROM KruizeLMRecommendationEntry k WHERE k.experiment_name = :experimentName";
         public static final String DELETE_FROM_METADATA_BY_DATASOURCE_NAME = "DELETE FROM KruizeDSMetadataEntry km WHERE km.datasource_name = :dataSourceName";
         public static final String DELETE_FROM_METRIC_PROFILE_BY_PROFILE_NAME = "DELETE FROM KruizeMetricProfileEntry km WHERE km.name = :metricProfileName";
+        public static final String DELETE_FROM_METADATA_PROFILE_BY_PROFILE_NAME = "DELETE FROM KruizeLMMetadataProfileEntry km WHERE km.name = :metadataProfileName";
         public static final String DB_PARTITION_DATERANGE = "CREATE TABLE IF NOT EXISTS %s_%s%s%s PARTITION OF %s FOR VALUES FROM ('%s-%s-%s 00:00:00.000') TO ('%s-%s-%s 23:59:59');";
         public static final String SELECT_ALL_KRUIZE_TABLES = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' " +
                 "and (table_name like 'kruize_results_%' or table_name like 'kruize_recommendations_%') ";
@@ -76,17 +102,22 @@ public class DBConstants {
                 " WHERE container->>'container_name' = :container_name" +
                 " AND container->>'container_image_name' = :container_image_name" +
                 " ))";
-        public static final String UPDATE_EXPERIMENT_EXP_TYPE = "UPDATE kruize_experiments SET experiment_type = :experiment_type WHERE experiment_name = :experiment_name";
-        public static final String UPDATE_RECOMMENDATIONS_EXP_TYPE = "UPDATE kruize_recommendations SET experiment_type = :experiment_type WHERE experiment_name = :experiment_name and interval_end_time = :interval_end_time";
-        public static final String SELECT_EXPERIMENT_EXP_TYPE = "SELECT experiment_type from kruize_experiments WHERE experiment_id = :experiment_id";
-        public static final String SELECT_RECOMMENDATIONS_EXP_TYPE = "SELECT experiment_type from kruize_recommendations WHERE experiment_name = :experiment_name";
-
+        public static final String SELECT_FROM_LM_EXPERIMENTS_BY_INPUT_JSON = "SELECT * FROM kruize_lm_experiments WHERE cluster_name = :cluster_name " +
+                "AND EXISTS (SELECT 1 FROM jsonb_array_elements(extended_data->'kubernetes_objects') AS kubernetes_object" +
+                " WHERE kubernetes_object->>'name' = :name " +
+                " AND kubernetes_object->>'namespace' = :namespace " +
+                " AND kubernetes_object->>'type' = :type " +
+                " AND EXISTS (SELECT 1 FROM jsonb_array_elements(kubernetes_object->'containers') AS container" +
+                " WHERE container->>'container_name' = :container_name" +
+                " AND container->>'container_image_name' = :container_image_name" +
+                " ))";
     }
 
     public static final class TABLE_NAMES {
         public static final String KRUIZE_EXPERIMENTS = "kruize_experiments";
         public static final String KRUIZE_RESULTS = "kruize_results";
         public static final String KRUIZE_RECOMMENDATIONS = "kruize_recommendations";
+        public static final String KRUIZE_LM_RECOMMENDATIONS = "kruize_lm_recommendations";
         public static final String KRUIZE_PERFORMANCE_PROFILES = "kruize_performance_profiles";
 
     }
