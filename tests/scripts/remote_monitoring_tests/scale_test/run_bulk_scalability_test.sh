@@ -16,6 +16,7 @@
 #
 
 cluster_type="openshift"
+exp_type="container"
 num_exps=250
 num_days_of_res=2
 num_clients=10
@@ -92,11 +93,14 @@ function execution_time() {
 }
 
 
-while getopts c:a:p:r:u:n:d:m:i:e:s:q:h gopts
+while getopts c:a:p:r:u:n:d:m:i:e:s:q:f:h gopts
 do
 	case ${gopts} in
 	c)
 		cluster_type=${OPTARG}
+		;;
+	f)
+		exp_type=${OPTARG}
 		;;
 	a)
 		IP=${OPTARG}
@@ -157,7 +161,7 @@ do
 	logfile="${SCALE_LOG_DIR}/${name}.log"
 	echo "logfile = $logfile"
 
-	nohup ./rosSimulationScalabilityWrapper.sh --ip "${IP}" --port "${PORT}" --name ${name} --count ${num_exps},${results_count} --minutesjump ${minutes_jump} --initialstartdate ${initial_start_date} --limitdays ${num_days_of_res} --intervalhours ${interval_hours} --clientthread ${loop}  --prometheusserver ${prometheus_server} --outputdir ${RESULTS_DIR} >> ${logfile} 2>&1 &
+	nohup ./rosSimulationScalabilityWrapper.sh --ip "${IP}" --port "${PORT}" --name ${name} --count ${num_exps},${results_count} --exptype ${exp_type} --minutesjump ${minutes_jump} --initialstartdate ${initial_start_date} --limitdays ${num_days_of_res} --intervalhours ${interval_hours} --clientthread ${loop}  --prometheusserver ${prometheus_server} --outputdir ${RESULTS_DIR} >> ${logfile} 2>&1 &
 
 	pid_array+=($!)
 
