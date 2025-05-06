@@ -16,6 +16,7 @@
 #
 
 cluster_type="openshift"
+exp_type="container"
 num_exps=250
 num_days_of_res=2
 num_clients=10
@@ -92,11 +93,14 @@ function execution_time() {
 }
 
 
-while getopts c:a:p:r:u:n:d:m:i:e:s:q:h gopts
+while getopts c:a:p:r:u:n:d:m:i:e:s:q:f:h gopts
 do
 	case ${gopts} in
 	c)
 		cluster_type=${OPTARG}
+		;;
+	f)
+		exp_type=${OPTARG}
 		;;
 	a)
 		IP=${OPTARG}
@@ -157,7 +161,7 @@ do
 	logfile="${SCALE_LOG_DIR}/${name}.log"
 	echo "logfile = $logfile"
 
-	nohup ./rosSimulationScalabilityWrapper.sh --ip "${IP}" --port "${PORT}" --name ${name} --count ${num_exps},${results_count} --minutesjump ${minutes_jump} --initialstartdate ${initial_start_date} --limitdays ${num_days_of_res} --intervalhours ${interval_hours} --clientthread ${loop}  --prometheusserver ${prometheus_server} --outputdir ${RESULTS_DIR} >> ${logfile} 2>&1 &
+	nohup ./rosSimulationScalabilityWrapper.sh --ip "${IP}" --port "${PORT}" --name ${name} --count ${num_exps},${results_count} --exptype ${exp_type} --minutesjump ${minutes_jump} --initialstartdate ${initial_start_date} --limitdays ${num_days_of_res} --intervalhours ${interval_hours} --clientthread ${loop}  --prometheusserver ${prometheus_server} --outputdir ${RESULTS_DIR} >> ${logfile} 2>&1 &
 
 	pid_array+=($!)
 
@@ -171,6 +175,23 @@ do
 
 	sleep 60
 done
+
+name="ns_scaletest${num_exps}-${loop}"
+logfile="${SCALE_LOG_DIR}/${name}.log"
+echo "logfile = $logfile"
+
+if [ "${exp_type}" == "namespace" ]; then
+	nohup ./rosSimulationScalabilityWrapper.sh --ip "${IP}" --port "${PORT}" --name ${name} --count ${num_exps},${results_count} --exptype "${exp_type}" --minutesjump ${minutes_jump} --initialstartdate ${initial_start_date} --limitdays ${num_days_of_res} --intervalhours ${interval_hours} --clientthread ${loop}  --prometheusserver ${prometheus_server} --outputdir ${RESULTS_DIR} >> ${logfile} 2>&1 &
+	pid_array+=($!)
+
+	echo
+	echo "#####################################################################################"
+	echo "#                                                                                   #"
+	echo "#  Kicked off ${num_exps} namespace experiments and data upload for client: ${loop} #"
+	echo "#                                                                                   #"
+	echo "#####################################################################################"
+	echo
+fi
 
 query_db &
 MYSELF=$!
@@ -195,8 +216,11 @@ echo "Capturing execution time in ${exec_time_log}...done"
 
 # Compare the expected results count in the db with the actual results count
 actual_results_count=$(kubectl exec `kubectl get pods -o=name -n openshift-tuning | grep kruize-db` -n openshift-tuning -- psql -U admin -d kruizeDB -c "SELECT count(*) from public.kruize_results ;" | tail -3 | head -1 | tr -d '[:space:]')
-
 expected_results_count=$((${num_exps} * ${num_clients} * ${num_days_of_res} * 96))
+
+if [ "${exp_type}" == "namespace" ]; then
+	expected_results_count=$((${expected_results_count} + (${num_exps} * ${num_days_of_res} * 96)))
+fi
 total_results_count=$((${expected_results_count} + ${total_results_count}))
 
 j=0
