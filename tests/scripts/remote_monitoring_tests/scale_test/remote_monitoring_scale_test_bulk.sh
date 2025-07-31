@@ -56,6 +56,25 @@ function usage() {
 	exit -1
 }
 
+function kruize_scale_test_remote_patch() {
+	CRC_DIR="./manifests/crc/default-db-included-installation"
+	KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT="${CRC_DIR}/openshift/kruize-crc-openshift.yaml"
+	KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE="${CRC_DIR}/minikube/kruize-crc-minikube.yaml"
+
+
+	if [ ${cluster_type} == "minikube" ]; then
+		sed -i -E 's/"isROSEnabled": "false",?\s*//g; s/"local": "true",?\s*//g'  ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}    #this will remove the entry and use default set by java i.e. isROSEnabled=true and local=false
+	elif [ ${cluster_type} == "openshift" ]; then
+		sed -i -E 's/"isROSEnabled": "false",?\s*//g; s/"local": "true",?\s*//g'  ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+		sed -i 's/cpu: "0.5"/cpu: "2"/g' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+		sed -i 's/memory: "100Mi"/memory: "30Gi"/g' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+		sed -i 's/cpu: "0.7"/cpu: "2"/g' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+		sed -i 's/memory: "768Mi"/memory: "8Gi"/g' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+		sed -i 's/storage: 500Mi/storage: 1Gi/g' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+	fi
+}
+
+
 function get_kruize_pod_log() {
 	log_dir=$1
 
@@ -156,7 +175,7 @@ if [ ${kruize_setup} == true ]; then
 	echo "Removing isROSEnabled=false and local=true"
 	cluster_type=${CLUSTER_TYPE}
 	pushd ${KRUIZE_REPO} > /dev/null
-		kruize_remote_patch
+		kruize_scale_test_remote_patch
         	echo "./deploy.sh -c ${CLUSTER_TYPE} -i ${KRUIZE_IMAGE} -m ${target} -t >> ${KRUIZE_SETUP_LOG}" | tee -a ${LOG}
 		./deploy.sh -c ${CLUSTER_TYPE} -i ${KRUIZE_IMAGE} -m ${target} -t >> ${KRUIZE_SETUP_LOG} 2>&1
 
