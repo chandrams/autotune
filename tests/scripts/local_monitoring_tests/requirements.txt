@@ -1,7 +1,22 @@
-pytest
-requests
-jinja2
-pytest-html==3.2.0
-kubernetes
-docker
-jsonschema
+# ============================================
+# Local Monitoring Tests - Python Dependencies
+# ============================================
+
+# Testing Framework
+pytest~=9.0.3
+pytest-html~=4.2.0
+
+# HTTP Client
+requests~=2.33.1
+
+# Template Engine
+jinja2~=3.1.6
+
+# Kubernetes Client
+kubernetes~=35.0.0
+
+# Docker Client
+docker~=7.1.0
+
+# JSON Schema Validation
+jsonschema~=4.26.0
