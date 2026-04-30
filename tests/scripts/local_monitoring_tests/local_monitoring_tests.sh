@@ -159,10 +159,34 @@ function local_monitoring_tests() {
 
 		popd > /dev/null
 
-		passed=$(grep -o -E '[0-9]+ passed' ${TEST_DIR}/report-${test}.html | cut -d' ' -f1)
-		failed=$(grep -o -E 'check the boxes to filter the results.*' ${TEST_DIR}/report-${test}.html | grep -o -E '[0-9]+ failed' | cut -d' ' -f1)
-		errors=$(grep -o -E '[0-9]+ errors' ${TEST_DIR}/report-${test}.html | cut -d' ' -f1)
-
+		# Parse XML report for accurate test counts (more reliable than HTML parsing)
+		if [ -f "${TEST_DIR}/report-${test}.xml" ]; then
+			# Extract test counts from XML attributes
+			passed=$(grep -o 'tests="[0-9]*"' ${TEST_DIR}/report-${test}.xml | head -1 | grep -o '[0-9]*')
+			failed=$(grep -o 'failures="[0-9]*"' ${TEST_DIR}/report-${test}.xml | head -1 | grep -o '[0-9]*')
+			errors=$(grep -o 'errors="[0-9]*"' ${TEST_DIR}/report-${test}.xml | head -1 | grep -o '[0-9]*')
+			skipped=$(grep -o 'skipped="[0-9]*"' ${TEST_DIR}/report-${test}.xml | head -1 | grep -o '[0-9]*')
+			
+			# Set default values if variables are empty
+			passed=${passed:-0}
+			failed=${failed:-0}
+			errors=${errors:-0}
+			skipped=${skipped:-0}
+			
+			# Calculate actual passed tests (total - failed - errors - skipped)
+			passed=$((passed - failed - errors - skipped))
+		else
+			# Fallback to HTML parsing if XML not available
+			passed=$(grep -o -E '[0-9]+ passed' ${TEST_DIR}/report-${test}.html | cut -d' ' -f1)
+			failed=$(grep -o -E 'check the boxes to filter the results.*' ${TEST_DIR}/report-${test}.html | grep -o -E '[0-9]+ failed' | cut -d' ' -f1)
+			errors=$(grep -o -E '[0-9]+ errors' ${TEST_DIR}/report-${test}.html | cut -d' ' -f1)
+			
+			# Set default values if variables are empty
+			passed=${passed:-0}
+			failed=${failed:-0}
+			errors=${errors:-0}
+		fi
+	
 		TESTS_PASSED=$(($TESTS_PASSED + $passed))
 		TESTS_FAILED=$(($TESTS_FAILED + $failed))
 
