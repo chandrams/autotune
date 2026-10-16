@@ -9,6 +9,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.sql.Timestamp;
+import java.util.Objects;
 
 @Entity
 @Table(name = "kruize_lm_recommendations", indexes = {
@@ -78,5 +79,19 @@ public class KruizeLMRecommendationEntry {
 
     public void setExperimentType(String experimentType) {
         this.experiment_type = experimentType;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof KruizeLMRecommendationEntry)) return false;
+        KruizeLMRecommendationEntry that = (KruizeLMRecommendationEntry) o;
+        return Objects.equals(experiment_name, that.experiment_name) &&
+                Objects.equals(interval_end_time, that.interval_end_time);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(experiment_name, interval_end_time);
     }
 }

@@ -90,12 +90,12 @@ echo ${BUILD_PARAMS}
 BUILDTMPFILE=/tmp/docker_build_log.$$
 BUILDER="docker"
 
-${BUILDER} build ${BUILD_PARAMS} --format=docker --build-arg AUTOTUNE_VERSION=${DOCKER_TAG} -t ${AUTOTUNE_DOCKER_IMAGE} -f ${AUTOTUNE_DOCKERFILE} . 2>${BUILDTMPFILE}
+${BUILDER} build ${BUILD_PARAMS} --platform linux/amd64 --format=docker --build-arg AUTOTUNE_VERSION=${DOCKER_TAG} -t ${AUTOTUNE_DOCKER_IMAGE} -f ${AUTOTUNE_DOCKERFILE} . 2>${BUILDTMPFILE}
 build_error=$(grep 'Error:\|unknown flag:' ${BUILDTMPFILE})
 
 if [ -n "${build_error}" ]; then
 	echo '--format=docker not supported'
-	${BUILDER} build ${BUILD_PARAMS} --build-arg AUTOTUNE_VERSION=${DOCKER_TAG} -t ${AUTOTUNE_DOCKER_IMAGE} -f ${AUTOTUNE_DOCKERFILE} .
+	${BUILDER} build ${BUILD_PARAMS} --platform linux/amd64 --build-arg AUTOTUNE_VERSION=${DOCKER_TAG} -t ${AUTOTUNE_DOCKER_IMAGE} -f ${AUTOTUNE_DOCKERFILE} .
 	check_err "Docker build of ${AUTOTUNE_DOCKER_IMAGE} failed."
 fi
 

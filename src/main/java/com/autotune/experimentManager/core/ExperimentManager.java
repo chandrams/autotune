@@ -1,19 +1,15 @@
 package com.autotune.experimentManager.core;
 
-import com.autotune.experimentManager.services.ListTrialStatus;
-
-import com.autotune.experimentManager.services.CreateExperimentTrial;
-import com.autotune.experimentManager.services.ListExperimentTrail;
 import com.autotune.experimentManager.settings.EMS;
 import com.autotune.experimentManager.utils.EMConstants;
-
-import com.autotune.utils.ServerContext;
-
-import org.eclipse.jetty.ee8.servlet.ServletContextHandler;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Experiment Manager initialisation helper.
+ * Servlet registration removed — EM endpoints are wired via JAX-RS {@code @Path}.
+ * Called from {@link com.autotune.operator.KruizeStartupBean} on {@code StartupEvent}.
+ */
 public class ExperimentManager {
     public static EMExecutorService emExecutorService;
     public static EMStageProcessor emStageProcessor;
@@ -26,31 +22,22 @@ public class ExperimentManager {
         emStageProcessor = new EMStageProcessor();
         emScheduledStageProcessor = new EMScheduledStageProcessor();
         LOGGER.info(EMConstants.Logs.ExperimentManager.INITIALIZE_EM);
-    }
 
-    public static void launch(ServletContextHandler contextHandler) {
-        LOGGER.info("EM version: testv1");
-        initializeEM();
-        addEMServlets(contextHandler);
-
-        if (true != performEnvCheck()) {
-            // Raise an exception or error
+        if (!performEnvCheck()) {
+            LOGGER.warn("EM environment check failed — continuing anyway");
+        }
+        if (!performConfigCheck()) {
+            LOGGER.warn("EM config check failed — continuing anyway");
         }
 
-        if (true != performConfigCheck()) {
-            // Raise an exception or error
-        }
-
-        // Set the initial executors based on settings
         emExecutorService.createExecutors(EMS.getController().getCurrentExecutors());
         emExecutorService.initiateExperimentStageProcessor(emStageProcessor);
         emExecutorService.initiateExperimentStageProcessor(emScheduledStageProcessor);
-
+        LOGGER.info("EM version: testv1 — initialised");
     }
 
     public static boolean performEnvCheck() {
-        // TODO: Read the system limit's and detect the environment
-        // Parking it for future implementation
+        // TODO: Read the system limits and detect the environment
         return true;
     }
 
@@ -65,12 +52,5 @@ public class ExperimentManager {
 
     public static void notifyScheduledQueueProcessor() {
         emScheduledStageProcessor.notifyProcessor();
-    }
-
-    private static void addEMServlets(ServletContextHandler context) {
-        LOGGER.info(EMConstants.Logs.ExperimentManager.ADD_EM_SERVLETS);
-        context.addServlet(CreateExperimentTrial.class, ServerContext.EXPERIMENT_MANAGER_CREATE_TRIAL);
-        context.addServlet(ListExperimentTrail.class, ServerContext.EXPERIMENT_MANAGER_LIST_EXPERIMENT_TRIAL);
-        context.addServlet(ListTrialStatus.class, ServerContext.EXPERIMENT_MANAGER_LIST_TRIAL_STATUS);
     }
 }

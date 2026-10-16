@@ -156,7 +156,7 @@ metadata:
 spec:
   storageClassName: manual
   capacity:
-    storage: 500Mi # Sets PV Volume
+    storage: 1Gi # Sets PV Volume
   accessModes:
     - ReadWriteMany
   hostPath:
@@ -175,7 +175,7 @@ spec:
     - ReadWriteMany  # Sets read and write access
   resources:
     requests:
-      storage: 500Mi  # Sets volume size
+      storage: 1Gi  # Sets volume size
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -207,8 +207,8 @@ data:
       "savetodb": "true",
       "dbdriver": "jdbc:postgresql://",
       "plots": "true",
-      "isROSEnabled": "false",
-      "local": "true",
+      
+      
       "logAllHttpReqAndResp": "true",
       "recommendationsURL" : "http://kruize.openshift-tuning.svc.cluster.local:8080/generateRecommendations?experiment_name=%s",
       "experimentsURL" : "http://kruize.openshift-tuning.svc.cluster.local:8080/createExperiment",
@@ -299,11 +299,11 @@ spec:
               value: /var/lib/pg_data
           resources:
             requests:
-              memory: "100Mi"
-              cpu: "0.5"
+              memory: "2Gi"
+              cpu: "2"
             limits:
-              memory: "100Mi"
-              cpu: "0.5"
+              memory: "2Gi"
+              cpu: "2"
           ports:
             - containerPort: 5432
           volumeMounts:
@@ -363,7 +363,7 @@ spec:
               done
       containers:
         - name: kruize
-          image: quay.io/kruize/autotune_operator:0.11
+          image: quay.io/chandra25ms/kruize-quarkus:test
           imagePullPolicy: Always
           volumeMounts:
             - name: config-volume
@@ -379,6 +379,22 @@ spec:
               value: "/etc/config/kruizeconfigjson"
             - name: JAVA_TOOL_OPTIONS
               value: "-XX:MaxRAMPercentage=80"
+            # Required by Quarkus: datasource URL, Flyway, and KruizeConfig are all
+            # resolved at JVM boot before any CDI bean fires — the DB_CONFIG_FILE /
+            # KRUIZE_CONFIG_FILE JSON files are read too late for these values.
+            # Values must match the kruize-db-deployment Postgres env vars above.
+            - name: DB_HOST
+              value: "kruize-db-service"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USER
+              value: "admin"
+            - name: DB_PASSWORD
+              value: "admin"
+            - name: DB_NAME
+              value: "kruizeDB"
+            - name: k8stype
+              value: "openshift"
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kruize-kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
             - name: KAFKA_TOPICS
@@ -389,11 +405,11 @@ spec:
               value: ""
           resources:
             requests:
-              memory: "768Mi"
-              cpu: "0.7"
+              memory: "2Gi"
+              cpu: "2"
             limits:
-              memory: "768Mi"
-              cpu: "0.7"
+              memory: "2Gi"
+              cpu: "2"
           ports:
             - name: kruize-port
               containerPort: 8080
@@ -601,7 +617,7 @@ spec:
     spec:
       containers:
         - name: kruize-ui-nginx-container
-          image: quay.io/kruize/kruize-ui:0.0.9
+          image: quay.io/kruize/kruize-ui:0.1.0
           imagePullPolicy: Always
           env:
             - name: KRUIZE_UI_ENV

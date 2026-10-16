@@ -582,9 +582,9 @@ function form_curl_cmd() {
 		;;
 	esac
 
-	curl_cmd="curl -s -H 'Accept: application/json' ${AUTOTUNE_URL}"
+	curl_cmd="curl -s -H Accept:application/json -H Content-Type:application/json ${AUTOTUNE_URL}"
 	if [ "${crud_operation}" == "update" ]; then
-		curl_cmd="curl -s -X PUT -H 'Accept: application/json' ${AUTOTUNE_URL}"
+		curl_cmd="curl -s -X PUT -H Accept:application/json -H Content-Type:application/json ${AUTOTUNE_URL}"
 	fi
 	echo "curl_cmd = ${curl_cmd}"
 }
@@ -900,10 +900,16 @@ function create_performance_profile() {
         echo ""
 
         perf_profile_status=$(echo ${status_json} | jq '.status')
+        perf_profile_httpcode=$(echo ${status_json} | jq '.httpcode')
         echo "create performance profile status = ${perf_profile_status}"
         if [ "${perf_profile_status}" != \"SUCCESS\" ]; then
-                echo "Failed! Create performance profile failed. Status - ${perf_profile_status}"
-                exit 1
+                # 409 means the profile already exists — treat as success on re-runs
+                if [ "${perf_profile_httpcode}" == "409" ]; then
+                        echo "Performance profile already exists, continuing..."
+                else
+                        echo "Failed! Create performance profile failed. Status - ${perf_profile_status}"
+                        exit 1
+                fi
         fi
 }
 
@@ -965,10 +971,16 @@ function kruize_local_ros_patch() {
 	KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT="${CRC_DIR}/openshift/kruize-crc-openshift.yaml"
 	KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE="${CRC_DIR}/minikube/kruize-crc-minikube.yaml"
 
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		SED_I="sed -i ''"
+	else
+		SED_I="sed -i"
+	fi
+
 	if [ ${cluster_type} == "minikube" ] || [ ${cluster_type} == "kind" ]; then
       		if grep -q '"isROSEnabled": "false"' ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}; then
       		  	echo "Setting flag 'isROSEnabled' to 'true'"
-        		sed -i 's/"isROSEnabled": "false"/"isROSEnabled": "true"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}
+        		${SED_I} 's/"isROSEnabled": "false"/"isROSEnabled": "true"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}
 
         		# Use awk to find the 'kruizeconfigjson' block and insert 'metricProfileFilePath' and 'metadataProfileFilePath' before "hibernate"
         		awk '
@@ -985,7 +997,7 @@ function kruize_local_ros_patch() {
   	elif [ ${cluster_type} == "openshift" ]; then
   	      if grep -q '"isROSEnabled": "false"' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}; then
   	        	echo "Setting flag 'isROSEnabled' to 'true'"
-            		sed -i 's/"isROSEnabled": "false"/"isROSEnabled": "true"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+  	         		${SED_I} 's/"isROSEnabled": "false"/"isROSEnabled": "true"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
 
             		# Use awk to find the 'kruizeconfigjson' block and insert 'metricProfileFilePath' and 'metadataProfileFilePath' before "hibernate"
             		awk '
@@ -1011,12 +1023,18 @@ function kruize_remote_patch() {
 	KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT="${CRC_DIR}/openshift/kruize-crc-openshift.yaml"
 	KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE="${CRC_DIR}/minikube/kruize-crc-minikube.yaml"
 
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		SED_I="sed -i ''"
+	else
+		SED_I="sed -i"
+	fi
+
 	if [ ${cluster_type} == "minikube" ] || [ ${cluster_type} == "kind" ]; then
-		sed -i -E 's/"isROSEnabled": "false",?\s*//g; s/"local": "true",?\s*//g'  ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}    #this will remove the entry and use default set by java i.e. isROSEnabled=true and local=false
+		${SED_I} -E 's/"isROSEnabled": "false",?\s*//g; s/"local": "true",?\s*//g'  ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}    #this will remove the entry and use default set by java i.e. isROSEnabled=true and local=false
 	elif [ ${cluster_type} == "openshift" ]; then
-		sed -i -E 's/"isROSEnabled": "false",?\s*//g; s/"local": "true",?\s*//g'  ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
-		sed -i 's/\([[:space:]]*\)\(storage:\)[[:space:]]*[0-9]\+Mi/\1\2 1Gi/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
-		sed -i 's/\([[:space:]]*\)\(memory:\)[[:space:]]*".*"/\1\2 "2Gi"/; s/\([[:space:]]*\)\(cpu:\)[[:space:]]*".*"/\1\2 "2"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+		${SED_I} -E 's/"isROSEnabled": "false",?\s*//g; s/"local": "true",?\s*//g'  ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+		${SED_I} 's/\([[:space:]]*\)\(storage:\)[[:space:]]*[0-9]*Mi/\1\2 1Gi/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+		${SED_I} 's/\([[:space:]]*\)\(memory:\)[[:space:]]*"[^"]*"/\1\2 "2Gi"/g; s/\([[:space:]]*\)\(cpu:\)[[:space:]]*"[^"]*"/\1\2 "2"/g' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
 	fi
 }
 

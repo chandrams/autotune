@@ -1,263 +1,222 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xmlns="http://maven.apache.org/POM/4.0.0"
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>org.autotune</groupId>
+    <groupId>com.autotune</groupId>
     <artifactId>autotune</artifactId>
-    <version>0.11</version>
+    <version>0.11-SNAPSHOT</version>
+
     <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.40.1</quarkus.platform.version>
+        <compiler-plugin.version>3.13.0</compiler-plugin.version>
+        <surefire-plugin.version>3.3.1</surefire-plugin.version>
+
+        <!-- Keep Non-Quarkus Library Versions from original branch -->
         <fabric8-version>7.7.0</fabric8-version>
         <org-json-version>20260522</org-json-version>
-        <jetty-version>12.1.7</jetty-version>
-        <log4j-version>2.26.0</log4j-version>
-        <java-version>25</java-version>
-        <prometheus-simpleclient>0.16.0</prometheus-simpleclient>
         <gson-version>2.14.0</gson-version>
-        <maven-compiler-plugin-version>3.15.0</maven-compiler-plugin-version>
-        <maven-assembly-plugin-version>3.7.1</maven-assembly-plugin-version>
-        <appassembler-maven-plugin-version>2.1.0</appassembler-maven-plugin-version>
         <apachehttpclient-version>4.5.14</apachehttpclient-version>
-        <postgresql-version>42.7.11</postgresql-version>
-        <hibernate-version>6.6.45.Final</hibernate-version>
-        <hibernate-Validator>8.0.3.Final</hibernate-Validator>
-        <micrometer-version>1.12.10</micrometer-version>
         <awssdk-version>2.46.5</awssdk-version>
-        <jackson-version>2.22.0</jackson-version>
         <evalex-version>3.6.2</evalex-version>
         <mockito-version>5.23.0</mockito-version>
-        <kafka-version>4.2.0</kafka-version>
-        <maven-surefire-plugin-version>3.5.2</maven-surefire-plugin-version>
-        <argLine></argLine>
-        <surefireArgLine>-Dnet.bytebuddy.experimental=true</surefireArgLine>
+        <servlet-api.version>4.0.1</servlet-api.version>
+        <log4j.version>2.23.1</log4j.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
+        <!-- Quarkus Core & REST (RESTEasy Reactive) Extensions -->
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-core</artifactId>
-            <version>${jackson-version}</version>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-rest</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-rest-jackson</artifactId>
         </dependency>
 
+        <!-- ORM / DB Extensions -->
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-            <version>${jackson-version}</version>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <!-- Flyway 10 (bundled in Quarkus 3.10+) split PostgreSQL support to a separate artifact -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-validator</artifactId>
         </dependency>
 
+        <!-- Observability Extensions -->
         <dependency>
-            <groupId>io.fabric8</groupId>
-            <artifactId>kubernetes-client</artifactId>
-            <version>${fabric8-version}</version>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-openapi</artifactId>
         </dependency>
 
+        <!-- Infrastructure & Clients Extensions -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-kubernetes-client</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-messaging-kafka</artifactId>
+        </dependency>
+
+        <!-- Retained Non-Quarkus Library Dependencies from autotune/pom.xml -->
         <dependency>
             <groupId>io.fabric8</groupId>
             <artifactId>verticalpodautoscaler-client</artifactId>
             <version>${fabric8-version}</version>
         </dependency>
-
-        <!-- https://mvnrepository.com/artifact/org.json/json -->
-        <dependency>
-            <groupId>org.json</groupId>
-            <artifactId>json</artifactId>
-            <version>${org-json-version}</version>
-        </dependency>
-
-        <!-- https://mvnrepository.com/artifact/org.eclipse.jetty/jetty-server -->
-        <dependency>
-            <groupId>org.eclipse.jetty</groupId>
-            <artifactId>jetty-server</artifactId>
-            <version>${jetty-version}</version>
-        </dependency>
-
-        <!-- https://mvnrepository.com/artifact/org.eclipse.jetty/jetty-servlets -->
-        <dependency>
-            <groupId>org.eclipse.jetty.ee8</groupId>
-            <artifactId>jetty-ee8-servlets</artifactId>
-            <version>${jetty-version}</version>
-        </dependency>
-
-        <!-- https://mvnrepository.com/artifact/org.eclipse.jetty/jetty-servlet -->
-        <dependency>
-            <groupId>org.eclipse.jetty.ee8</groupId>
-            <artifactId>jetty-ee8-servlet</artifactId>
-            <version>${jetty-version}</version>
-        </dependency>
-
-        <!-- https://mvnrepository.com/artifact/org.apache.logging.log4j/log4j-slf4j-impl -->
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-slf4j2-impl</artifactId>
-            <version>${log4j-version}</version>
-            <scope>compile</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-core</artifactId>
-            <version>${log4j-version}</version>
-            <scope>compile</scope>
-        </dependency>
-
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>cloudwatchlogs</artifactId>
             <version>${awssdk-version}</version>
         </dependency>
-
         <dependency>
             <groupId>com.ezylang</groupId>
             <artifactId>EvalEx</artifactId>
             <version>${evalex-version}</version>
         </dependency>
-
-        <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-core</artifactId>
-            <version>${mockito-version}</version>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-junit-jupiter</artifactId>
-            <version>${mockito-version}</version>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- The Prometheus client -->
-        <dependency>
-            <groupId>io.prometheus</groupId>
-            <artifactId>simpleclient</artifactId>
-            <version>${prometheus-simpleclient}</version>
-        </dependency>
-        <!-- Hotspot JVM metrics-->
-        <dependency>
-            <groupId>io.prometheus</groupId>
-            <artifactId>simpleclient_hotspot</artifactId>
-            <version>${prometheus-simpleclient}</version>
-        </dependency>
-        <!-- https://mvnrepository.com/artifact/io.prometheus/simpleclient_servlet -->
-        <dependency>
-            <groupId>io.prometheus</groupId>
-            <artifactId>simpleclient_servlet</artifactId>
-            <version>${prometheus-simpleclient}</version>
-        </dependency>
-        <!-- https://mvnrepository.com/artifact/org.apache.httpcomponents/httpclient -->
-        <dependency>
-            <groupId>org.apache.httpcomponents</groupId>
-            <artifactId>httpclient</artifactId>
-            <version>${apachehttpclient-version}</version>
-        </dependency>
-        <!-- https://mvnrepository.com/artifact/com.google.code.gson/gson -->
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
             <version>${gson-version}</version>
         </dependency>
-
         <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <version>${postgresql-version}</version>
+            <groupId>org.json</groupId>
+            <artifactId>json</artifactId>
+            <version>${org-json-version}</version>
         </dependency>
         <dependency>
-            <groupId>org.hibernate.orm</groupId>
-            <artifactId>hibernate-core</artifactId>
-            <version>${hibernate-version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.hibernate.orm</groupId>
-            <artifactId>hibernate-c3p0</artifactId>
-            <version>${hibernate-version}</version>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <version>${apachehttpclient-version}</version>
         </dependency>
 
-
+        <!-- Javax Servlet API to compile the legacy unchanged servlets in Phase 0 -->
         <dependency>
-            <groupId>org.hibernate.validator</groupId>
-            <artifactId>hibernate-validator</artifactId>
-            <version>${hibernate-Validator}</version>
+            <groupId>javax.servlet</groupId>
+            <artifactId>javax.servlet-api</artifactId>
+            <version>${servlet-api.version}</version>
         </dependency>
 
+        <!-- Log4j 2 for compiling unmodified legacy files -->
         <dependency>
-            <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-core</artifactId>
-            <version>${micrometer-version}</version>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>${log4j.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-registry-prometheus</artifactId>
-            <version>${micrometer-version}</version>
-        </dependency>
-        <!-- https://mvnrepository.com/artifact/org.apache.kafka/kafka-clients -->
-        <dependency>
-            <groupId>org.apache.kafka</groupId>
-            <artifactId>kafka-clients</artifactId>
-            <version>${kafka-version}</version>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>${log4j.version}</version>
         </dependency>
 
+        <!-- Test Dependencies -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit-mockito</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
     <build>
         <plugins>
-            <!-- any other plugins -->
             <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>appassembler-maven-plugin</artifactId>
-                <version>${appassembler-maven-plugin-version}</version>
-                <configuration>
-                    <assembleDirectory>target</assembleDirectory>
-                    <programs>
-                        <program>
-                            <mainClass>com.autotune.Autotune</mainClass>
-                            <name>Autotune</name>
-                        </program>
-                        <program>
-                            <mainClass>com.autotune.jobs.CreatePartition</mainClass>
-                            <name>CreatePartition</name>
-                        </program>
-                        <program>
-                            <mainClass>com.autotune.jobs.RetentionPartition</mainClass>
-                            <name>RetentionPartition</name>
-                        </program>
-                    </programs>
-                </configuration>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <extensions>true</extensions>
                 <executions>
                     <execution>
-                        <id>make-assembly</id>
-                        <!-- this is used for inheritance merges -->
-                        <phase>package</phase>
-                        <!-- append to the packaging phase. -->
                         <goals>
-                            <goal>assemble</goal>
-                            <!-- goals == mojos -->
+                            <goal>build</goal>
+                            <goal>generate-code</goal>
+                            <goal>generate-code-tests</goal>
                         </goals>
                     </execution>
                 </executions>
             </plugin>
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>${maven-compiler-plugin-version}</version>
+                <version>${compiler-plugin.version}</version>
                 <configuration>
-                    <release>${java-version}</release>
-                    <source>${java-version}</source>
-                    <target>${java-version}</target>
+                    <compilerArgs>
+                        <arg>-parameters</arg>
+                    </compilerArgs>
                 </configuration>
             </plugin>
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>${maven-surefire-plugin-version}</version>
+                <version>${surefire-plugin.version}</version>
                 <configuration>
-                    <failIfNoTests>true</failIfNoTests>
-                    <argLine>
-                        ${argLine} ${surefireArgLine}
-                        -XX:+EnableDynamicAgentLoading
-                        -javaagent:${settings.localRepository}/net/bytebuddy/byte-buddy-agent/1.17.7/byte-buddy-agent-1.17.7.jar
-                    </argLine>
+                    <systemPropertyVariables>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        <maven.home>${maven.home}</maven.home>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>native</id>
+            <activation>
+                <property>
+                    <name>native</name>
+                </property>
+            </activation>
+            <properties>
+                <skipITs>false</skipITs>
+                <!-- quarkus.package.type was deprecated in 3.10; use quarkus.native.enabled=true instead -->
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+            </properties>
+        </profile>
+    </profiles>
 </project>

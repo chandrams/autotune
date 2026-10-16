@@ -15,79 +15,47 @@
  *******************************************************************************/
 package com.autotune.analyzer.services;
 
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import io.smallrye.common.annotation.RunOnVirtualThread;
+
 import com.autotune.common.target.kubernetes.service.KubernetesServices;
 import com.autotune.common.target.kubernetes.service.impl.KubernetesServicesImpl;
 import com.autotune.utils.KruizeConstants;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import java.util.stream.Collectors;
+@Path("/query/listDeployments")
+@Produces(MediaType.APPLICATION_JSON)
+@RunOnVirtualThread
+public class ListDeploymentsInNamespace {
 
-public class ListDeploymentsInNamespace extends HttpServlet {
-    @Override
-    protected void doGet(HttpServletRequest request, HttpServletResponse response) {
+    @GET
+    @RunOnVirtualThread
+    public Response doGet(@QueryParam(KruizeConstants.JSONKeys.NAMESPACE) String namespace) {
         KubernetesServices kubernetesServices = null;
         try {
-            // Set content type
-            response.setContentType("application/json");
-            // Set encoding
-            response.setCharacterEncoding("UTF-8");
-            // Check if the namespace is passed as a URL param
-            String namespace = request.getParameter(KruizeConstants.JSONKeys.NAMESPACE);
-            String error = null;
-            if (null == namespace) {
-                // Check if the request has a JSON body in which namespace is passed
-                String inputData = request.getReader().lines().collect(Collectors.joining());
-                JSONObject inputJson = new JSONObject(inputData);
-                if (!inputJson.has(KruizeConstants.JSONKeys.NAMESPACE)) {
-                    response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-                    error = KruizeConstants.ErrorMsgs.APIErrorMsgs.ListDeploymentsInNamespace.NO_NAMESPACE_SENT;
-                    namespace = null;
-                } else {
-                    if (null == inputJson.getString(KruizeConstants.JSONKeys.NAMESPACE)) {
-                        error = KruizeConstants.ErrorMsgs.APIErrorMsgs.ListDeploymentsInNamespace.NO_NAMESPACE_SENT;
-                        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-                        namespace = null;
-                    } else if( inputJson.getString(KruizeConstants.JSONKeys.NAMESPACE).isBlank()
-                            || inputJson.getString(KruizeConstants.JSONKeys.NAMESPACE).isEmpty()) {
-                        error = KruizeConstants.ErrorMsgs.APIErrorMsgs.ListDeploymentsInNamespace.EMPTY_NAMESPACE;
-                        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-                        namespace = null;
-                    } else {
-                        namespace = inputJson.getString(KruizeConstants.JSONKeys.NAMESPACE);
-                    }
-                }
+            if (namespace == null || namespace.isBlank()) {
+                String error = KruizeConstants.ErrorMsgs.APIErrorMsgs.ListDeploymentsInNamespace.NO_NAMESPACE_SENT;
+                return Response.status(Response.Status.BAD_REQUEST)
+                        .entity("{\"error\":\"" + error + "\"}")
+                        .build();
             }
-            // If namespace is not found return error
-            if (null == namespace) {
-                // if error is not set, set it to invalid namespace
-                if (null == error) {
-                    error = KruizeConstants.ErrorMsgs.APIErrorMsgs.ListDeploymentsInNamespace.INVALID_NAMESPACE;
-                }
-                JSONObject returnJson = new JSONObject();
-                returnJson.put(KruizeConstants.JSONKeys.ERROR, error);
-                response.getWriter().println(returnJson.toString(4));
-            } else {
-                // Initialising the kubernetes service
-                kubernetesServices = new KubernetesServicesImpl();
-                // Create a return object
-                JSONObject returnJson = new JSONObject();
-                JSONObject dataJson = new JSONObject();
-                JSONArray deploymentsList = new JSONArray();
-                kubernetesServices.getDeploymentsBy(namespace).forEach(deployment -> {
-                    deploymentsList.put(deployment.getMetadata().getName());
-                });
-                dataJson.put(KruizeConstants.JSONKeys.DEPLOYMENTS, deploymentsList);
-                returnJson.put(KruizeConstants.JSONKeys.DATA, dataJson);
-                // Return OK
-                response.setStatus(HttpServletResponse.SC_OK);
-                response.getWriter().println(returnJson.toString(4));
-            }
+
+            kubernetesServices = new KubernetesServicesImpl();
+            JSONObject returnJson = new JSONObject();
+            JSONObject dataJson = new JSONObject();
+            JSONArray deploymentsList = new JSONArray();
+            kubernetesServices.getDeploymentsBy(namespace).forEach(deployment -> {
+                deploymentsList.put(deployment.getMetadata().getName());
+            });
+            dataJson.put(KruizeConstants.JSONKeys.DEPLOYMENTS, deploymentsList);
+            returnJson.put(KruizeConstants.JSONKeys.DATA, dataJson);
+            return Response.ok(returnJson.toString(4)).build();
         } catch (Exception e) {
             e.printStackTrace();
+            return Response.serverError().entity("{\"error\":\"" + e.getMessage() + "\"}").build();
         } finally {
             if (kubernetesServices != null) {
                 kubernetesServices.shutdownClient();
@@ -95,8 +63,29 @@ public class ListDeploymentsInNamespace extends HttpServlet {
         }
     }
 
-    @Override
-    protected void doPost(HttpServletRequest request, HttpServletResponse response) {
-        doGet(request, response);
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RunOnVirtualThread
+    public Response doPost(String body) {
+        // Accept namespace from body JSON or fall back to empty (GET-style delegation via query param not applicable here)
+        try {
+            if (body != null && !body.isBlank()) {
+                JSONObject inputJson = new JSONObject(body);
+                if (inputJson.has(KruizeConstants.JSONKeys.NAMESPACE)) {
+                    String namespace = inputJson.optString(KruizeConstants.JSONKeys.NAMESPACE, null);
+                    if (namespace == null || namespace.isBlank()) {
+                        return Response.status(Response.Status.BAD_REQUEST)
+                                .entity("{\"error\":\"" + KruizeConstants.ErrorMsgs.APIErrorMsgs.ListDeploymentsInNamespace.EMPTY_NAMESPACE + "\"}")
+                                .build();
+                    }
+                    return doGet(namespace);
+                }
+            }
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .entity("{\"error\":\"" + KruizeConstants.ErrorMsgs.APIErrorMsgs.ListDeploymentsInNamespace.NO_NAMESPACE_SENT + "\"}")
+                    .build();
+        } catch (Exception e) {
+            return Response.serverError().entity("{\"error\":\"" + e.getMessage() + "\"}").build();
+        }
     }
 }

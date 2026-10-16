@@ -203,20 +203,20 @@ if [ "${CLUSTER_TYPE}" == "openshift" ]; then
 
 	# Create the performance profile
 	# If kruize service is exposed then do not specify the port	
-	cmd="curl http://${SERVER_IP_ADDR}/createPerformanceProfile -d @${RESOURCE_OPTIMIZATION_JSON}"
+	cmd="curl -s -H 'Content-Type: application/json' http://${SERVER_IP_ADDR}/createPerformanceProfile -d @${RESOURCE_OPTIMIZATION_JSON}"
 	echo ""
 	echo "cmd = ${cmd}"
-	curl http://${SERVER_IP_ADDR}/createPerformanceProfile -d @"${RESOURCE_OPTIMIZATION_JSON}"
+	curl -s -H 'Content-Type: application/json' http://${SERVER_IP_ADDR}/createPerformanceProfile -d @"${RESOURCE_OPTIMIZATION_JSON}"
 else
 	echo ""
 	echo "./monitor-metrics-promql.sh ${ITER} ${TIMEOUT} ${METRICS_LOG_DIR} ${BENCHMARK_SERVER} ${APP_NAME} ${CLUSTER_TYPE} ${DEPLOYMENT_NAME} ${CONTAINER_NAME} ${NAMESPACE} &" | tee -a ${LOG}
 	./monitor-metrics-promql.sh ${ITER} ${TIMEOUT} ${METRICS_LOG_DIR} ${BENCHMARK_SERVER} ${APP_NAME} ${CLUSTER_TYPE} ${DEPLOYMENT_NAME} ${CONTAINER_NAME} ${NAMESPACE} &
 
 	# Create the performance profile
-	cmd="curl http://${SERVER_IP_ADDR}:${port}/createPerformanceProfile -d @${RESOURCE_OPTIMIZATION_JSON}"
+	cmd="curl -s -H 'Content-Type: application/json' http://${SERVER_IP_ADDR}:${port}/createPerformanceProfile -d @${RESOURCE_OPTIMIZATION_JSON}"
 	echo ""
 	echo "cmd = ${cmd}"
-	curl http://${SERVER_IP_ADDR}:${port}/createPerformanceProfile -d @"${RESOURCE_OPTIMIZATION_JSON}"
+	curl -s -H 'Content-Type: application/json' http://${SERVER_IP_ADDR}:${port}/createPerformanceProfile -d @"${RESOURCE_OPTIMIZATION_JSON}"
 fi
 
 echo | tee -a ${LOG}

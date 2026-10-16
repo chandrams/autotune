@@ -15,6 +15,11 @@
  *******************************************************************************/
 package com.autotune.analyzer.services;
 
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import io.smallrye.common.annotation.RunOnVirtualThread;
+
 import com.autotune.analyzer.serviceObjects.BulkInput;
 import com.autotune.analyzer.serviceObjects.BulkJobStatus;
 import com.autotune.analyzer.workerimpl.BulkJobManager;
@@ -36,13 +41,6 @@ import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.servlet.ServletConfig;
-import javax.servlet.ServletException;
-import javax.servlet.annotation.WebServlet;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -51,32 +49,23 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import static com.autotune.analyzer.utils.AnalyzerConstants.ServiceConstants.*;
+import static com.autotune.analyzer.utils.AnalyzerConstants.ServiceConstants.VERBOSE;
 import static com.autotune.utils.KruizeConstants.KRUIZE_BULK_API.*;
 
 /**
  *
  */
-@WebServlet(asyncSupported = true)
-public class BulkService extends HttpServlet {
-    private static final long serialVersionUID = 1L;
+
+@Path("/bulk")
+@Produces(MediaType.APPLICATION_JSON)
+@RunOnVirtualThread
+public class BulkService {
     private static final Logger LOGGER = LoggerFactory.getLogger(BulkService.class);
     private static Map<String, BulkJobStatus> jobStatusMap = new ConcurrentHashMap<>();
     private ExecutorService executorService = Executors.newFixedThreadPool(10);
 
     /**
      * Filters the JSON representation of a BulkJobStatus object based on the specified include and exclude fields.
-     *
-     * <p>This method applies dynamic filtering to the JSON output, allowing selective inclusion or exclusion
-     * of specific fields within the JSON structure. It supports hierarchical filtering for summary and experiment fields.</p>
-     *
-     * @param jsonInput       The BulkJobStatus object to be filtered and serialized to JSON.
-     * @param includeFields   A set of fields to be included in the JSON output. If specified, only these fields will be included.
-     *                        Fields can be prefixed with "SUMMARY|" or "EXPERIMENTS|" to filter nested fields.
-     * @param excludeFields   A set of fields to be excluded from the JSON output. If includeFields is empty, exclusion will be applied.
-     * @param experiment_name The experiment name, used for copying relevant data in jsonInput.
-     * @return A JSON string representation of the filtered BulkJobStatus object.
-     * @throws Exception If there is an error during JSON processing.
      */
     public static String filterJson(BulkJobStatus jsonInput, Set<String> includeFields, Set<String> excludeFields, String experiment_name) throws Exception {
         ObjectMapper mapper = new ObjectMapper();
@@ -119,7 +108,6 @@ public class BulkService extends HttpServlet {
                 filters.addFilter(JOB_FILTER, SimpleBeanPropertyFilter.serializeAllExcept(excludeFields));
             }
 
-            // Assuming the input JSON has a filter identifier like @JsonFilter("dynamicFilter")
             mapper.setFilterProvider(filters);
         } catch (Exception e) {
             LOGGER.error("Not able to filter experiments due to {}", e.getMessage());
@@ -129,131 +117,86 @@ public class BulkService extends HttpServlet {
                 return mapper.writeValueAsString(jsonInput);
             }
         }
-
     }
 
-    @Override
-    public void init(ServletConfig config) throws ServletException {
-        super.init(config);
-    }
-
-    /**
-     * @param req
-     * @param resp
-     * @throws ServletException
-     * @throws IOException
-     */
-    @Override
-    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
+    @GET
+    @RunOnVirtualThread
+    public Response doGet(
+            @QueryParam(JOB_ID) String jobID,
+            @QueryParam(VERBOSE) String verboseParam,
+            @QueryParam("include") String includeParams,
+            @QueryParam("exclude") String excludeParams,
+            @QueryParam("experiment_name") String experiment_name) {
         String statusValue = "failure";
         Timer.Sample timerJobStatus = Timer.start(MetricsConfig.meterRegistry());
         try {
-            String jobID = req.getParameter(JOB_ID);
-            String verboseParam = req.getParameter(VERBOSE);
-            // Read query parameters
-            String includeParams = req.getParameter("include");
-            String excludeParams = req.getParameter("exclude");
-            String experiment_name = req.getParameter("experiment_name");
-            // Parse the include and exclude parameters into lists
             Set<String> includeFields = includeParams != null ? new HashSet<>(Arrays.asList(includeParams.split(","))) : new HashSet<>(Arrays.asList("summary"));
             Set<String> excludeFields = excludeParams != null ? new HashSet<>(Arrays.asList(excludeParams.split(","))) : Collections.emptySet();
-
-            // If the parameter is not provided (null), default it to false
             boolean verbose = verboseParam != null && Boolean.parseBoolean(verboseParam);
+
             BulkJobStatus jobDetails;
-            // By default, cache_job_in_mem set to false , If set it to true it will store in memory
             if (KruizeDeploymentInfo.test_use_only_cache_job_in_mem) {
                 if (jobStatusMap.isEmpty()) {
-                    sendErrorResponse(
-                            resp,
-                            null,
-                            HttpServletResponse.SC_NOT_FOUND,
-                            JOB_NOT_FOUND_MSG
-                    );
-                    return;
+                    return Response.status(Response.Status.NOT_FOUND).entity("{\"error\":\"" + JOB_NOT_FOUND_MSG + "\"}").build();
                 }
                 jobDetails = jobStatusMap.get(jobID);
             } else {
                 ExperimentDAO experimentDAO = new ExperimentDAOImpl();
                 KruizeBulkJobEntry kruizeBulkJobEntry = experimentDAO.findBulkJobById(jobID);
                 if (null == kruizeBulkJobEntry) {
-                    sendErrorResponse(
-                            resp,
-                            null,
-                            HttpServletResponse.SC_NOT_FOUND,
-                            JOB_NOT_FOUND_MSG
-                    );
-                    return;
-                } else {
-                    jobDetails = kruizeBulkJobEntry.getBulkJobStatus();
-
-                    GenericRestApiClient recommendationApiClient = new GenericRestApiClient();
-                    String listRecommendationsURL = String.format(
-                            KruizeDeploymentInfo.recommendations_url.replaceAll("generateRecommendations.*", "listRecommendations") + "?" + JOB_ID
-                                    + "=%s", jobID);
-                    if (experiment_name != null && !experiment_name.equals("")) {
-                        String encodedExperimentName = URLEncoder.encode(experiment_name, StandardCharsets.UTF_8);
-                        listRecommendationsURL = listRecommendationsURL + "&experiment_name=" + encodedExperimentName;
-                    }
-                    recommendationApiClient.setBaseURL(listRecommendationsURL);
-                    GenericRestApiClient.HttpResponseWrapper recommendationResponseCode = null;
-                    Map<String, JsonNode> recommendationResponse = new HashMap<>();
-                    try {
-                        recommendationResponseCode = recommendationApiClient.getKruizeAPI(null);
-                        // Parse JSON using Jackson
-                        ObjectMapper objectMapper = new ObjectMapper();
-                        JsonNode rootArray = objectMapper.readTree(recommendationResponseCode.getResponseBody().toString());
-                        // Extract "experiment_name" values
-                        for (JsonNode node : rootArray) {
-                            String experimentName = node.get("experiment_name").asText();
-                            recommendationResponse.put(experimentName, node);
-                        }
-                        if (!includeFields.isEmpty() && includeFields.contains("experiments")) {
-                            if (jobDetails != null && jobDetails.getExperimentMap() != null) {
-                                jobDetails.getExperimentMap().forEach(
-                                        (experimentName, experiment) -> {
-                                            BulkJobStatus.GenerateRecommendationsAPIResponse bresp =
-                                                    new BulkJobStatus.GenerateRecommendationsAPIResponse();
-                                            if (recommendationResponse.containsKey(experimentName)) {
-                                                bresp.setResponse(
-                                                        new ArrayList<>(Arrays.asList(recommendationResponse.get(experimentName)))
-                                                );
-                                                experiment.getApis().setRecommendations(bresp);
-                                            }
-                                        }
-                                );
-                            }
-                        }
-                    } catch (Exception e) {
-                        LOGGER.error("Not able to fetch recommedations from database due to {}", e.getMessage());
-                    }
+                    return Response.status(Response.Status.NOT_FOUND).entity("{\"error\":\"" + JOB_NOT_FOUND_MSG + "\"}").build();
                 }
+                jobDetails = kruizeBulkJobEntry.getBulkJobStatus();
 
+                GenericRestApiClient recommendationApiClient = new GenericRestApiClient();
+                String listRecommendationsURL = String.format(
+                        KruizeDeploymentInfo.recommendations_url.replaceAll("generateRecommendations.*", "listRecommendations") + "?" + JOB_ID
+                                + "=%s", jobID);
+                if (experiment_name != null && !experiment_name.equals("")) {
+                    String encodedExperimentName = URLEncoder.encode(experiment_name, StandardCharsets.UTF_8);
+                    listRecommendationsURL = listRecommendationsURL + "&experiment_name=" + encodedExperimentName;
+                }
+                recommendationApiClient.setBaseURL(listRecommendationsURL);
+                Map<String, JsonNode> recommendationResponse = new HashMap<>();
+                try {
+                    GenericRestApiClient.HttpResponseWrapper recommendationResponseCode = recommendationApiClient.getKruizeAPI(null);
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    JsonNode rootArray = objectMapper.readTree(recommendationResponseCode.getResponseBody().toString());
+                    for (JsonNode node : rootArray) {
+                        String experimentName = node.get("experiment_name").asText();
+                        recommendationResponse.put(experimentName, node);
+                    }
+                    if (!includeFields.isEmpty() && includeFields.contains("experiments")) {
+                        if (jobDetails != null && jobDetails.getExperimentMap() != null) {
+                            jobDetails.getExperimentMap().forEach(
+                                    (experimentName, experiment) -> {
+                                        BulkJobStatus.GenerateRecommendationsAPIResponse bresp =
+                                                new BulkJobStatus.GenerateRecommendationsAPIResponse();
+                                        if (recommendationResponse.containsKey(experimentName)) {
+                                            bresp.setResponse(
+                                                    new ArrayList<>(Arrays.asList(recommendationResponse.get(experimentName)))
+                                            );
+                                            experiment.getApis().setRecommendations(bresp);
+                                        }
+                                    }
+                            );
+                        }
+                    }
+                } catch (Exception e) {
+                    LOGGER.error("Not able to fetch recommedations from database due to {}", e.getMessage());
+                }
             }
-            resp.setContentType(JSON_CONTENT_TYPE);
-            resp.setCharacterEncoding(CHARACTER_ENCODING);
-            SimpleFilterProvider filters = new SimpleFilterProvider();
 
             if (jobDetails == null) {
-                sendErrorResponse(
-                        resp,
-                        null,
-                        HttpServletResponse.SC_NOT_FOUND,
-                        JOB_NOT_FOUND_MSG
-                );
-            } else {
-                try {
-                    resp.setStatus(HttpServletResponse.SC_OK);
-                    // Filter JSON
-                    String filteredJson = filterJson(jobDetails, includeFields, excludeFields, experiment_name);
-                    resp.getWriter().write(filteredJson);
-                    statusValue = "success";
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+                return Response.status(Response.Status.NOT_FOUND).entity("{\"error\":\"" + JOB_NOT_FOUND_MSG + "\"}").build();
             }
+
+            String filteredJson = filterJson(jobDetails, includeFields, excludeFields, experiment_name);
+            statusValue = "success";
+            return Response.ok(filteredJson).build();
         } catch (Exception e) {
             e.printStackTrace();
+            return Response.serverError().entity("{\"error\":\"" + e.getMessage() + "\"}").build();
         } finally {
             if (null != timerJobStatus) {
                 MetricsConfig.timerJobStatus = MetricsConfig.timerBJobStatus.tag("status", statusValue).register(MetricsConfig.meterRegistry());
@@ -262,30 +205,17 @@ public class BulkService extends HttpServlet {
         }
     }
 
-    /**
-     * @param request
-     * @param response
-     * @throws ServletException
-     * @throws IOException
-     */
-    @Override
-    protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RunOnVirtualThread
+    public Response doPost(String body) {
         String statusValue = "failure";
         Timer.Sample timerCreateBulkJob = Timer.start(MetricsConfig.meterRegistry());
         try {
-            // Set response type
-            response.setContentType(JSON_CONTENT_TYPE);
-            response.setCharacterEncoding(CHARACTER_ENCODING);
-
-            // Create ObjectMapper instance
             ObjectMapper objectMapper = new ObjectMapper();
+            BulkInput payload = objectMapper.readValue(body, BulkInput.class);
 
-            // Read the request payload and map to RequestPayload class
-            BulkInput payload = objectMapper.readValue(request.getInputStream(), BulkInput.class);
-
-            // Generate a unique jobID
             String jobID = UUID.randomUUID().toString();
-            // validate the input params
             if (payload != null && !payload.isEmpty()) {
                 ValidationOutputData validationOutputData = BulkServiceValidation.validate(payload, jobID);
                 if (!validationOutputData.isSuccess()) {
@@ -300,44 +230,22 @@ public class BulkService extends HttpServlet {
                 try {
                     new ExperimentDAOImpl().bulkJobSave(jobStatus.getBulkJobForDB("{}"));
                 } catch (Exception e) {
-                    LOGGER.error("Not able to save jb details into DB {} due to {}", jobStatus, e.getMessage());
+                    LOGGER.error("Not able to save job details into DB {} due to {}", jobStatus, e.getMessage());
                 }
             }
-            // Submit the job to be processed asynchronously
-            executorService.submit(new BulkJobManager(jobID, jobStatus, payload));      //TOdo remove payload as it is part of jobStatus object
+            executorService.submit(new BulkJobManager(jobID, jobStatus, payload));
 
-            // Just sending a simple success response back
-            // Return the jobID to the user
             JSONObject jsonObject = new JSONObject();
             jsonObject.put(JOB_ID, jobID);
-            response.getWriter().write(jsonObject.toString());
             statusValue = "success";
+            return Response.ok(jsonObject.toString()).build();
         } catch (Exception e) {
-            sendErrorResponse(
-                    response,
-                    null,
-                    HttpServletResponse.SC_BAD_REQUEST,
-                    e.getMessage()
-            );
+            return Response.status(Response.Status.BAD_REQUEST).entity("{\"error\":\"" + e.getMessage() + "\"}").build();
         } finally {
             if (null != timerCreateBulkJob) {
                 MetricsConfig.timerCreateBulkJob = MetricsConfig.timerBCreateBulkJob.tag("status", statusValue).register(MetricsConfig.meterRegistry());
                 timerCreateBulkJob.stop(MetricsConfig.timerCreateBulkJob);
             }
         }
-    }
-
-    @Override
-    public void destroy() {
-        executorService.shutdown();
-    }
-
-    public void sendErrorResponse(HttpServletResponse response, Exception e, int httpStatusCode, String errorMsg) throws
-            IOException {
-        if (null != e) {
-            LOGGER.error(e.toString());
-            if (null == errorMsg) errorMsg = e.getMessage();
-        }
-        response.sendError(httpStatusCode, errorMsg);
     }
 }

@@ -73,10 +73,8 @@ public class KruizeExperimentEntry {
     @JdbcTypeCode(SqlTypes.JSON)
     private JsonNode meta_data;
     private long experiment_type;
-    @Temporal(TemporalType.TIMESTAMP)
     @Column(name = KruizeConstants.JSONKeys.CREATION_DATE, updatable = false)
     private Timestamp creation_date;
-    @Temporal(TemporalType.TIMESTAMP)
     @Column(name = KruizeConstants.JSONKeys.UPDATE_DATE)
     private Timestamp update_date;
 

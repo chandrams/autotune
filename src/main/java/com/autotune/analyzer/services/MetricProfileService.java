@@ -16,6 +16,11 @@
 
 package com.autotune.analyzer.services;
 
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import io.smallrye.common.annotation.RunOnVirtualThread;
+
 import com.autotune.analyzer.adapters.DeviceDetailsAdapter;
 import com.autotune.analyzer.adapters.RecommendationItemAdapter;
 import com.autotune.analyzer.exceptions.InvalidValueException;
@@ -41,299 +46,186 @@ import com.google.gson.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.servlet.ServletConfig;
-import javax.servlet.ServletException;
-import javax.servlet.annotation.WebServlet;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.io.Serial;
 import java.lang.reflect.Type;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
-
-import static com.autotune.analyzer.utils.AnalyzerConstants.ServiceConstants.CHARACTER_ENCODING;
-import static com.autotune.analyzer.utils.AnalyzerConstants.ServiceConstants.JSON_CONTENT_TYPE;
 
 /**
- * REST API to create metric profile .
+ * REST API to create metric profile.
  */
-@WebServlet(asyncSupported = true)
-public class MetricProfileService extends HttpServlet {
-    @Serial
-    private static final long serialVersionUID = 1L;
-    private static final Logger LOGGER = LoggerFactory.getLogger(MetricProfileService.class);
-    private ConcurrentHashMap<String, PerformanceProfile> metricProfilesMap;
 
-    @Override
-    public void init(ServletConfig config) throws ServletException {
-        super.init(config);
-        metricProfilesMap = (ConcurrentHashMap<String, PerformanceProfile>) getServletContext()
-                .getAttribute(AnalyzerConstants.PerformanceProfileConstants.METRIC_PROFILE_MAP);
-    }
+@Path("/")
+@Produces(MediaType.APPLICATION_JSON)
+@RunOnVirtualThread
+public class MetricProfileService {
+    private static final Logger LOGGER = LoggerFactory.getLogger(MetricProfileService.class);
 
     /**
      * Validate and create new Metric Profile.
-     *
-     * @param request
-     * @param response
-     * @throws IOException
      */
-    @Override
-    protected void doPost(HttpServletRequest request, HttpServletResponse response) throws IOException {
+    @POST
+    @Path("/createMetricProfile")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RunOnVirtualThread
+    public Response doPost(String inputData) {
         try {
             Map<String, PerformanceProfile> metricProfilesMap = new ConcurrentHashMap<>();
-            String inputData = request.getReader().lines().collect(Collectors.joining());
             PerformanceProfile metricProfile = Converters.KruizeObjectConverters.convertInputJSONToCreateMetricProfile(inputData);
             ValidationOutputData validationOutputData = PerformanceProfileUtil.validateAndAddMetricProfile(metricProfilesMap, metricProfile);
             if (validationOutputData.isSuccess()) {
                 ValidationOutputData addedToDB = new ExperimentDBService().addMetricProfileToDB(metricProfile);
                 if (addedToDB.isSuccess()) {
                     metricProfilesMap.put(String.valueOf(metricProfile.getMetadata().get("name")), metricProfile);
-                    getServletContext().setAttribute(AnalyzerConstants.PerformanceProfileConstants.METRIC_PROFILE_MAP, metricProfilesMap);
                     LOGGER.debug(KruizeConstants.MetricProfileAPIMessages.ADD_METRIC_PROFILE_TO_DB_WITH_VERSION,
                             metricProfile.getMetadata().get("name").asText(), metricProfile.getProfile_version());
-                    // Store metric profile in-memory collection
                     MetricProfileCollection metricProfileCollection = MetricProfileCollection.getInstance();
                     metricProfileCollection.addMetricProfile(metricProfile);
-
-                    sendSuccessResponse(response, String.format(KruizeConstants.MetricProfileAPIMessages.CREATE_METRIC_PROFILE_SUCCESS_MSG, metricProfile.getMetadata().get("name").asText()));
+                    return Response.status(Response.Status.CREATED).entity(
+                            new Gson().toJson(
+                                    new PerformanceProfileResponse(
+                                            String.format(KruizeConstants.MetricProfileAPIMessages.CREATE_METRIC_PROFILE_SUCCESS_MSG,
+                                                    metricProfile.getMetadata().get("name").asText())
+                                                    + KruizeConstants.MetricProfileAPIMessages.VIEW_METRIC_PROFILES_MSG,
+                                            201, "", "SUCCESS")
+                            )
+                    ).build();
                 } else {
-                    sendErrorResponse(response, null, HttpServletResponse.SC_BAD_REQUEST, addedToDB.getMessage());
+                    return Response.status(Response.Status.BAD_REQUEST).entity(
+                            new Gson().toJson(new PerformanceProfileResponse(addedToDB.getMessage(), 400, "", "ERROR"))
+                    ).build();
                 }
-            } else
-                sendErrorResponse(response, null, validationOutputData.getErrorCode(), validationOutputData.getMessage());
-        } catch (Exception e) {
-            sendErrorResponse(response, e, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "Validation failed: " + e.getMessage());
+            } else {
+                return Response.status(validationOutputData.getErrorCode()).entity(
+                        new Gson().toJson(new PerformanceProfileResponse(validationOutputData.getMessage(), validationOutputData.getErrorCode(), "", "ERROR"))
+                ).build();
+            }
         } catch (InvalidValueException e) {
-            throw new RuntimeException(e);
+            return Response.serverError().entity(
+                    new Gson().toJson(new PerformanceProfileResponse("Validation failed: " + e.getMessage(), 500, "", "ERROR"))
+            ).build();
+        } catch (Exception e) {
+            return Response.serverError().entity(
+                    new Gson().toJson(new PerformanceProfileResponse("Validation failed: " + e.getMessage(), 500, "", "ERROR"))
+            ).build();
         }
     }
 
     /**
      * Get List of Metric Profiles
-     *
-     * @param request
-     * @param response
-     * @throws ServletException
-     * @throws IOException
      */
-    @Override
-    protected void doGet(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
-        response.setContentType(JSON_CONTENT_TYPE);
-        response.setCharacterEncoding(CHARACTER_ENCODING);
-        response.setStatus(HttpServletResponse.SC_OK);
-        String gsonStr = "[]";
-
-        ConcurrentHashMap<String, PerformanceProfile> metricProfilesMap = new ConcurrentHashMap<>();
-        String metricProfileName = request.getParameter(AnalyzerConstants.PerformanceProfileConstants.METRIC_PROFILE_NAME);
-        String verbose = request.getParameter(AnalyzerConstants.ServiceConstants.VERBOSE);
+    @GET
+    @Path("/listMetricProfiles")
+    @RunOnVirtualThread
+    public Response doGet(
+            @QueryParam(AnalyzerConstants.PerformanceProfileConstants.METRIC_PROFILE_NAME) String metricProfileName,
+            @QueryParam(AnalyzerConstants.ServiceConstants.VERBOSE) String verbose) {
         String internalVerbose = "false";
-        boolean error = false;
 
-        // validate Query params
-        Set<String> invalidParams = new HashSet<>();
-        for (String param : request.getParameterMap().keySet()) {
-            if (!KruizeSupportedTypes.LIST_METRIC_PROFILES_QUERY_PARAMS_SUPPORTED.contains(param)) {
-                invalidParams.add(param);
-            }
-        }
-
-        // Fetch metric profiles based on the query parameters using the in-memory storage collection
         try {
-            if (invalidParams.isEmpty()) {
-                if (null != verbose) {
-                    internalVerbose = verbose;
-                }
-
-                try {
-                    if (null != metricProfileName && !metricProfileName.isEmpty()) {
-                        internalVerbose = "true";
-                        loadMetricProfilesFromCollection(metricProfilesMap, metricProfileName);
-                    } else {
-                        loadAllMetricProfilesFromCollection(metricProfilesMap);
-                    }
-
-                    // Check if metric profile exists
-                    if (metricProfileName != null && !metricProfilesMap.containsKey(metricProfileName)) {
-                        error = true;
-                        sendErrorResponse(
-                                response,
-                                new Exception(AnalyzerErrorConstants.APIErrors.ListMetricProfileAPI.INVALID_METRIC_PROFILE_NAME_EXCPTN),
-                                HttpServletResponse.SC_BAD_REQUEST,
-                                String.format(AnalyzerErrorConstants.APIErrors.ListMetricProfileAPI.INVALID_METRIC_PROFILE_NAME_MSG, metricProfileName)
-                        );
-                    } else if (null == metricProfileName && metricProfilesMap.isEmpty()) {
-                        error = true;
-                        sendErrorResponse(
-                                response,
-                                new Exception(AnalyzerErrorConstants.APIErrors.ListMetricProfileAPI.NO_METRIC_PROFILES_EXCPTN),
-                                HttpServletResponse.SC_BAD_REQUEST,
-                                AnalyzerErrorConstants.APIErrors.ListMetricProfileAPI.NO_METRIC_PROFILES
-                        );
-                    }
-
-                    if (!error) {
-                        Collection<PerformanceProfile> values = metricProfilesMap.values();
-                        // create Gson Object
-                        Gson gsonObj = createGsonObject();
-
-                        if (internalVerbose.equals("false")) {
-                            Collection<JsonObject> filteredValues = new ArrayList<>();
-                            for(PerformanceProfile performanceProfile: values) {
-                                JsonObject jsonObject = new JsonObject();
-                                jsonObject.addProperty("name", performanceProfile.getMetadata().get("name").asText());
-                                filteredValues.add(jsonObject);
-                            }
-                            gsonStr = gsonObj.toJson(filteredValues);
-                        } else {
-                            gsonStr = gsonObj.toJson(values);
-                        }
-                        response.getWriter().println(gsonStr);
-                        response.getWriter().close();
-                    }
-                } catch (Exception e) {
-                    LOGGER.error("Exception: {}", e.getMessage());
-                    e.printStackTrace();
-                    sendErrorResponse(response, e, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, e.getMessage());
-                }
-            } else {
-                sendErrorResponse(
-                        response,
-                        new Exception(AnalyzerErrorConstants.APIErrors.ListMetricProfileAPI.INVALID_QUERY_PARAM),
-                        HttpServletResponse.SC_BAD_REQUEST,
-                        String.format(AnalyzerErrorConstants.APIErrors.ListMetricProfileAPI.INVALID_QUERY_PARAM, invalidParams)
-                );
+            if (null != verbose) {
+                internalVerbose = verbose;
             }
+
+            ConcurrentHashMap<String, PerformanceProfile> metricProfilesMap = new ConcurrentHashMap<>();
+
+            if (null != metricProfileName && !metricProfileName.isEmpty()) {
+                internalVerbose = "true";
+                loadMetricProfilesFromCollection(metricProfilesMap, metricProfileName);
+            } else {
+                loadAllMetricProfilesFromCollection(metricProfilesMap);
+            }
+
+            if (metricProfileName != null && !metricProfilesMap.containsKey(metricProfileName)) {
+                return Response.status(Response.Status.BAD_REQUEST).entity(
+                        new Gson().toJson(new PerformanceProfileResponse(
+                                String.format(AnalyzerErrorConstants.APIErrors.ListMetricProfileAPI.INVALID_METRIC_PROFILE_NAME_MSG, metricProfileName),
+                                400, "", "ERROR"))
+                ).build();
+            } else if (null == metricProfileName && metricProfilesMap.isEmpty()) {
+                return Response.status(Response.Status.BAD_REQUEST).entity(
+                        new Gson().toJson(new PerformanceProfileResponse(
+                                AnalyzerErrorConstants.APIErrors.ListMetricProfileAPI.NO_METRIC_PROFILES,
+                                400, "", "ERROR"))
+                ).build();
+            }
+
+            Collection<PerformanceProfile> values = metricProfilesMap.values();
+            Gson gsonObj = createGsonObject();
+            String gsonStr;
+
+            if (internalVerbose.equals("false")) {
+                Collection<JsonObject> filteredValues = new ArrayList<>();
+                for (PerformanceProfile performanceProfile : values) {
+                    JsonObject jsonObject = new JsonObject();
+                    jsonObject.addProperty("name", performanceProfile.getMetadata().get("name").asText());
+                    filteredValues.add(jsonObject);
+                }
+                gsonStr = gsonObj.toJson(filteredValues);
+            } else {
+                gsonStr = gsonObj.toJson(values);
+            }
+            return Response.ok(gsonStr).build();
+
         } catch (Exception e) {
             LOGGER.error(KruizeConstants.MetricProfileAPIMessages.LOAD_METRIC_PROFILE_FAILURE, e.getMessage());
-            sendErrorResponse(response, e, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, e.getMessage());
+            return Response.serverError().entity(
+                    new Gson().toJson(new PerformanceProfileResponse(e.getMessage(), 500, "", "ERROR"))
+            ).build();
         }
     }
 
     /**
-     * TODO: Need to implement
-     * Update Metric Profile
-     *
-     * @param req
-     * @param resp
-     * @throws ServletException
-     * @throws IOException
+     * Delete Metric profile — DELETE /deleteMetricProfile?name=<name>
      */
-    @Override
-    protected void doPut(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
-        super.doPut(req, resp);
-    }
-
-    /**
-     * Delete Metric profile
-     * Handles the DELETE request for deleting metric profile - DELETE /deleteMetricProfile
-     *
-     * Supported Query Parameters -
-     * name	- metric profile name to be deleted(required)
-     *
-     * @param request
-     * @param response
-     * @throws ServletException
-     * @throws IOException
-     */
-    @Override
-    protected void doDelete(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
-        response.setContentType(JSON_CONTENT_TYPE);
-        response.setCharacterEncoding(CHARACTER_ENCODING);
-        response.setStatus(HttpServletResponse.SC_OK);
-
-        ConcurrentHashMap<String, PerformanceProfile> metricProfilesMap = new ConcurrentHashMap<>();
-        String metricProfileName = request.getParameter(AnalyzerConstants.PerformanceProfileConstants.METRIC_PROFILE_NAME);
-
+    @DELETE
+    @Path("/deleteMetricProfile")
+    @RunOnVirtualThread
+    public Response doDelete(
+            @QueryParam(AnalyzerConstants.PerformanceProfileConstants.METRIC_PROFILE_NAME) String metricProfileName) {
         if (null == metricProfileName || metricProfileName.isEmpty()) {
-            sendErrorResponse(
-                    response,
-                    new Exception(AnalyzerErrorConstants.APIErrors.DeleteMetricProfileAPI.MISSING_METRIC_PROFILE_NAME_EXCPTN),
-                    HttpServletResponse.SC_BAD_REQUEST,
-                    String.format(AnalyzerErrorConstants.APIErrors.DeleteMetricProfileAPI.MISSING_METRIC_PROFILE_NAME_MSG)
-            );
-            return;
+            return Response.status(Response.Status.BAD_REQUEST).entity(
+                    new Gson().toJson(new PerformanceProfileResponse(
+                            String.format(AnalyzerErrorConstants.APIErrors.DeleteMetricProfileAPI.MISSING_METRIC_PROFILE_NAME_MSG),
+                            400, "", "ERROR"))
+            ).build();
         }
 
         try {
-            // load specified metric profile
+            ConcurrentHashMap<String, PerformanceProfile> metricProfilesMap = new ConcurrentHashMap<>();
             loadMetricProfilesFromCollection(metricProfilesMap, metricProfileName);
 
-            // Check if metric profile exists
             if (!metricProfilesMap.isEmpty() && metricProfilesMap.containsKey(metricProfileName)) {
                 try {
-                    // Deletes database and in-memory metric profile object stored
                     deleteMetricProfile(metricProfileName);
                     metricProfilesMap.remove(metricProfileName);
                 } catch (Exception e) {
-                    sendErrorResponse(
-                            response,
-                            e,
-                            HttpServletResponse.SC_BAD_REQUEST,
-                            e.getMessage());
-                    return;
+                    return Response.status(Response.Status.BAD_REQUEST).entity(
+                            new Gson().toJson(new PerformanceProfileResponse(e.getMessage(), 400, "", "ERROR"))
+                    ).build();
                 }
             } else {
-                sendErrorResponse(
-                        response,
-                        new Exception(AnalyzerErrorConstants.APIErrors.DeleteMetricProfileAPI.INVALID_METRIC_PROFILE_NAME_EXCPTN),
-                        HttpServletResponse.SC_BAD_REQUEST,
-                        String.format(AnalyzerErrorConstants.APIErrors.DeleteMetricProfileAPI.INVALID_METRIC_PROFILE_NAME_MSG, metricProfileName)
-                );
-                return;
+                return Response.status(Response.Status.BAD_REQUEST).entity(
+                        new Gson().toJson(new PerformanceProfileResponse(
+                                String.format(AnalyzerErrorConstants.APIErrors.DeleteMetricProfileAPI.INVALID_METRIC_PROFILE_NAME_MSG, metricProfileName),
+                                400, "", "ERROR"))
+                ).build();
             }
 
-            sendSuccessResponse(response, String.format(KruizeConstants.MetricProfileAPIMessages.DELETE_METRIC_PROFILE_SUCCESS_MSG, metricProfileName));
+            return Response.status(Response.Status.CREATED).entity(
+                    new Gson().toJson(
+                            new PerformanceProfileResponse(
+                                    String.format(KruizeConstants.MetricProfileAPIMessages.DELETE_METRIC_PROFILE_SUCCESS_MSG, metricProfileName)
+                                            + KruizeConstants.MetricProfileAPIMessages.VIEW_METRIC_PROFILES_MSG,
+                                    201, "", "SUCCESS")
+                    )
+            ).build();
 
         } catch (Exception e) {
             LOGGER.error(e.getMessage());
-            sendErrorResponse(response, e, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, e.getMessage());
+            return Response.serverError().entity(
+                    new Gson().toJson(new PerformanceProfileResponse(e.getMessage(), 500, "", "ERROR"))
+            ).build();
         }
-    }
-
-    /**
-     * Send success response in case of no errors or exceptions.
-     *
-     * @param response
-     * @param message
-     * @throws IOException
-     */
-    private void sendSuccessResponse(HttpServletResponse response, String message) throws IOException {
-        response.setContentType(JSON_CONTENT_TYPE);
-        response.setCharacterEncoding(CHARACTER_ENCODING);
-        response.setStatus(HttpServletResponse.SC_CREATED);
-        PrintWriter out = response.getWriter();
-        out.append(
-                new Gson().toJson(
-                        new PerformanceProfileResponse(message +
-                                KruizeConstants.MetricProfileAPIMessages.VIEW_METRIC_PROFILES_MSG,
-                                HttpServletResponse.SC_CREATED, "", "SUCCESS")
-                )
-        );
-        out.flush();
-    }
-
-    /**
-     * Send response containing corresponding error message in case of failures and exceptions
-     *
-     * @param response
-     * @param e
-     * @param httpStatusCode
-     * @param errorMsg
-     * @throws IOException
-     */
-    public void sendErrorResponse(HttpServletResponse response, Exception e, int httpStatusCode, String errorMsg) throws
-            IOException {
-        if (null != e) {
-            LOGGER.error(e.toString());
-            if (null == errorMsg)
-                errorMsg = e.getMessage();
-        }
-        response.sendError(httpStatusCode, errorMsg);
     }
 
     private void loadMetricProfilesFromCollection(Map<String, PerformanceProfile> metricProfilesMap, String metricProfileName) {
@@ -358,19 +250,16 @@ public class MetricProfileService extends HttpServlet {
     }
 
     private void deleteMetricProfile(String metricProfileName) {
-        ValidationOutputData deletedMetricProfileFromDB = null;
         try {
-            // delete the metric profile from DB
-            deletedMetricProfileFromDB = new ExperimentDAOImpl().deleteKruizeMetricProfileEntryByName(metricProfileName);
+            ValidationOutputData deletedMetricProfileFromDB = new ExperimentDAOImpl().deleteKruizeMetricProfileEntryByName(metricProfileName);
             if (deletedMetricProfileFromDB.isSuccess()) {
-                // remove in-memory metric profile
                 MetricProfileCollection.getInstance().getMetricProfileCollection().remove(metricProfileName);
                 LOGGER.debug(KruizeConstants.MetricProfileAPIMessages.DELETE_METRIC_PROFILE_FROM_DB_SUCCESS_MSG);
             } else {
-                LOGGER.error(AnalyzerErrorConstants.APIErrors.DeleteMetricProfileAPI.DELETE_METRIC_PROFILE_FROM_DB_FAILURE_MSG, deletedMetricProfileFromDB.getMessage());
+                LOGGER.error(AnalyzerErrorConstants.APIErrors.DeleteMetricProfileAPI.DELETE_METRIC_PROFILE_FROM_DB_FAILURE_MSG,
+                        deletedMetricProfileFromDB.getMessage());
             }
-
-        }  catch (Exception e) {
+        } catch (Exception e) {
             LOGGER.error(AnalyzerErrorConstants.APIErrors.DeleteMetricProfileAPI.DELETE_METRIC_PROFILE_FAILURE_MSG, e.getMessage());
         }
     }
@@ -383,19 +272,15 @@ public class MetricProfileService extends HttpServlet {
                 .registerTypeAdapter(Date.class, new GsonUTCDateAdapter())
                 .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
                 .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
-                // a custom serializer for serializing metadata of JsonNode type.
                 .registerTypeAdapter(JsonNode.class, new JsonSerializer<JsonNode>() {
                     @Override
                     public JsonElement serialize(JsonNode jsonNode, Type typeOfSrc, JsonSerializationContext context) {
                         if (jsonNode instanceof ObjectNode) {
                             ObjectNode objectNode = (ObjectNode) jsonNode;
                             JsonObject metadataJson = new JsonObject();
-
-                            // Extract the "name" field directly if it exists
                             if (objectNode.has("name")) {
                                 metadataJson.addProperty("name", objectNode.get("name").asText());
                             }
-
                             return metadataJson;
                         }
                         return context.serialize(jsonNode);

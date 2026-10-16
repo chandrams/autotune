@@ -15,22 +15,27 @@
  *******************************************************************************/
 package com.autotune.analyzer.services;
 
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import io.smallrye.common.annotation.RunOnVirtualThread;
+
 import com.autotune.common.target.kubernetes.service.KubernetesServices;
 import com.autotune.common.target.kubernetes.service.impl.KubernetesServicesImpl;
 import com.autotune.utils.KruizeConstants;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+@Path("/query/listNamespaces")
+@Produces(MediaType.APPLICATION_JSON)
+@RunOnVirtualThread
+public class ListNamespaces {
 
-public class ListNamespaces extends HttpServlet {
-    @Override
-    protected void doGet(HttpServletRequest request, HttpServletResponse response) {
+    @GET
+    @RunOnVirtualThread
+    public Response doGet() {
         KubernetesServices kubernetesServices = null;
         try {
-            // Initialising the kubernetes service
             kubernetesServices = new KubernetesServicesImpl();
             JSONObject returnJson = new JSONObject();
             JSONObject dataJson = new JSONObject();
@@ -40,13 +45,10 @@ public class ListNamespaces extends HttpServlet {
             });
             dataJson.put(KruizeConstants.JSONKeys.NAMESPACES, namespacesList);
             returnJson.put(KruizeConstants.JSONKeys.DATA, dataJson);
-            // Set content type
-            response.setContentType("application/json");
-            response.setCharacterEncoding("UTF-8");
-            response.setStatus(HttpServletResponse.SC_OK);
-            response.getWriter().println(returnJson.toString(4));
+            return Response.ok(returnJson.toString(4)).build();
         } catch (Exception e) {
             e.printStackTrace();
+            return Response.serverError().entity("{\"error\":\"" + e.getMessage() + "\"}").build();
         } finally {
             if (kubernetesServices != null) {
                 kubernetesServices.shutdownClient();
@@ -54,8 +56,9 @@ public class ListNamespaces extends HttpServlet {
         }
     }
 
-    @Override
-    protected void doPost(HttpServletRequest request, HttpServletResponse response) {
-        doGet(request, response);
+    @POST
+    @RunOnVirtualThread
+    public Response doPost() {
+        return doGet();
     }
 }
