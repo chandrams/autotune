@@ -15,6 +15,7 @@
 # limitations under the License.
 #
 
+
 ROOT_DIR="${PWD}"
 SCRIPTS_DIR="${ROOT_DIR}/scripts"
 
@@ -83,6 +84,8 @@ timeout=-1
 
 # Test with the kruize docker image specified in the deployment yaml
 use_yaml_build=0
+
+echo "***********"
 
 function ctrlc_handler() {
 	# Check if cluster type is docker
@@ -190,6 +193,7 @@ done
 # Call the proper setup function based on the cluster_type
 if [ ${setup} == 1 ]; then
 	if [ ${target} == "crc" ]; then
+		echo "starting crc.."
 		${cluster_type}_crc_start
 	else
 		${cluster_type}_start

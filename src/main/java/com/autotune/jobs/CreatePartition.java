@@ -5,7 +5,6 @@ import com.autotune.analyzer.exceptions.MonitoringAgentNotFoundException;
 import com.autotune.analyzer.exceptions.MonitoringAgentNotSupportedException;
 import com.autotune.database.dao.ExperimentDAOImpl;
 import com.autotune.database.helper.DBConstants;
-import com.autotune.database.init.KruizeHibernateUtil;
 import com.autotune.operator.InitializeDeployment;
 import com.autotune.utils.MetricsConfig;
 import io.micrometer.core.instrument.Timer;
@@ -28,7 +27,7 @@ public class CreatePartition {
         try {
             InitializeDeployment.setup_deployment_info();
             // create partitions
-            try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            try (Session session = io.quarkus.arc.Arc.container().instance(org.hibernate.SessionFactory.class).get().openSession()) {
                 tx = session.beginTransaction();
                 // Get the current year and month
                 YearMonth yearMonth = new ExperimentDAOImpl().buildDateForNextMonth(YearMonth.now());

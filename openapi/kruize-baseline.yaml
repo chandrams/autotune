@@ -1,0 +1,460 @@
+openapi: 3.1.0
+info:
+  title: Kruize Baseline API
+  description: Baseline OpenAPI specification for the Kruize/Autotune application including all core and newly introduced bulk/bulkConfig REST endpoints.
+  version: "0.11"
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "UP"
+
+  /metrics:
+    get:
+      summary: Metrics scraping endpoint
+      operationId: getMetrics
+      responses:
+        "200":
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /createExperiment:
+    post:
+      summary: Create optimization experiment
+      operationId: createExperiment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/CreateExperimentAPIObject'
+      responses:
+        "201":
+          description: Experiment created successfully
+        "400":
+          description: Validation failed
+    delete:
+      summary: Delete optimization experiment
+      operationId: deleteExperiment
+      responses:
+        "200":
+          description: Experiment deleted successfully
+
+  /listExperiments:
+    get:
+      summary: List all experiments
+      operationId: listExperiments
+      responses:
+        "200":
+          description: List of registered experiments
+
+  /updateResults:
+    post:
+      summary: Update experiment results
+      operationId: updateResults
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+      responses:
+        "200":
+          description: Results updated successfully
+
+  /updateRecommendations:
+    post:
+      summary: Update recommendations
+      operationId: updateRecommendations
+      responses:
+        "200":
+          description: Recommendations updated successfully
+
+  /generateRecommendations:
+    post:
+      summary: Generate recommendations
+      operationId: generateRecommendations
+      responses:
+        "200":
+          description: Recommendations generated successfully
+
+  /listRecommendations:
+    get:
+      summary: List recommendations
+      operationId: listRecommendations
+      responses:
+        "200":
+          description: Recommendations list
+
+  /kruize/api/v1/recommendations:
+    get:
+      summary: Get v1 recommendations
+      operationId: getV1Recommendations
+      responses:
+        "200":
+          description: Recommendations in v1 schema
+    post:
+      summary: Query or update v1 recommendations
+      operationId: postV1Recommendations
+      responses:
+        "200":
+          description: Recommendations updated/retrieved
+
+  /createPerformanceProfile:
+    post:
+      summary: Create a performance profile
+      operationId: createPerformanceProfile
+      responses:
+        "201":
+          description: Profile created
+  /listPerformanceProfiles:
+    get:
+      summary: List performance profiles
+      operationId: listPerformanceProfiles
+      responses:
+        "200":
+          description: List of performance profiles
+  /updatePerformanceProfile:
+    put:
+      summary: Update performance profile
+      operationId: updatePerformanceProfile
+      responses:
+        "200":
+          description: Profile updated
+  /deletePerformanceProfile:
+    delete:
+      summary: Delete performance profile
+      operationId: deletePerformanceProfile
+      responses:
+        "200":
+          description: Profile deleted
+
+  /createMetricProfile:
+    post:
+      summary: Create metric profile
+      operationId: createMetricProfile
+      responses:
+        "201":
+          description: Profile created
+  /listMetricProfiles:
+    get:
+      summary: List metric profiles
+      operationId: listMetricProfiles
+      responses:
+        "200":
+          description: List of profiles
+  /deleteMetricProfile:
+    delete:
+      summary: Delete metric profile
+      operationId: deleteMetricProfile
+      responses:
+        "200":
+          description: Profile deleted
+
+  /createMetadataProfile:
+    post:
+      summary: Create metadata profile
+      operationId: createMetadataProfile
+      responses:
+        "201":
+          description: Profile created
+  /listMetadataProfiles:
+    get:
+      summary: List metadata profiles
+      operationId: listMetadataProfiles
+      responses:
+        "200":
+          description: List of profiles
+  /updateMetadataProfile:
+    put:
+      summary: Update metadata profile
+      operationId: updateMetadataProfile
+      responses:
+        "200":
+          description: Profile updated
+  /deleteMetadataProfile:
+    delete:
+      summary: Delete metadata profile
+      operationId: deleteMetadataProfile
+      responses:
+        "200":
+          description: Profile deleted
+
+  /createLayer:
+    post:
+      summary: Create a layer
+      operationId: createLayer
+      responses:
+        "201":
+          description: Layer created
+  /listLayers:
+    get:
+      summary: List all layers
+      operationId: listLayers
+      responses:
+        "200":
+          description: List of layers
+
+  /datasources:
+    get:
+      summary: List all datasources
+      operationId: listDatasources
+      responses:
+        "200":
+          description: List of datasources
+
+  /dsmetadata:
+    get:
+      summary: Get datasource metadata
+      operationId: getDsMetadata
+      responses:
+        "200":
+          description: Metadata list
+    post:
+      summary: Import datasource metadata
+      operationId: postDsMetadata
+      responses:
+        "200":
+          description: Metadata imported
+    delete:
+      summary: Delete datasource metadata
+      operationId: deleteDsMetadata
+      responses:
+        "200":
+          description: Metadata deleted
+
+  /bulk:
+    get:
+      summary: Get bulk job status
+      operationId: getBulk
+      responses:
+        "200":
+          description: Bulk job status list
+    post:
+      summary: Post bulk job
+      operationId: postBulk
+      responses:
+        "202":
+          description: Bulk job accepted
+
+  /bulkConfigs:
+    get:
+      summary: Get bulk configurations
+      operationId: getBulkConfigs
+      parameters:
+        - name: enabled
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: config_name
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of bulk configurations
+        "404":
+          description: Bulk config not found
+    post:
+      summary: Create a bulk configuration
+      operationId: postBulkConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkConfig'
+      responses:
+        "201":
+          description: Bulk config created successfully
+        "409":
+          description: Bulk config already exists
+        "400":
+          description: Validation failed
+    put:
+      summary: Update a bulk configuration
+      operationId: putBulkConfig
+      parameters:
+        - name: config_name
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkConfigUpdateRequest'
+      responses:
+        "200":
+          description: Bulk config updated successfully
+        "404":
+          description: Bulk config not found
+    delete:
+      summary: Delete a bulk configuration
+      operationId: deleteBulkConfig
+      parameters:
+        - name: config_name
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Bulk config deleted successfully
+        "404":
+          description: Bulk config not found
+
+  /query/listNamespaces:
+    get:
+      summary: List namespaces
+      operationId: listNamespacesGet
+      responses:
+        "200":
+          description: List of namespaces
+    post:
+      summary: List namespaces (POST body filtering)
+      operationId: listNamespacesPost
+      responses:
+        "200":
+          description: List of namespaces
+
+  /query/listDeployments:
+    get:
+      summary: List deployments
+      operationId: listDeploymentsGet
+      responses:
+        "200":
+          description: List of deployments
+    post:
+      summary: List deployments (POST body filtering)
+      operationId: listDeploymentsPost
+      responses:
+        "200":
+          description: List of deployments
+
+  /query/listK8sObjects:
+    get:
+      summary: List supported K8s objects
+      operationId: listK8sObjectsGet
+      responses:
+        "200":
+          description: List of objects
+    post:
+      summary: List supported K8s objects (POST body filtering)
+      operationId: listK8sObjectsPost
+      responses:
+        "200":
+          description: List of objects
+
+components:
+  schemas:
+    CreateExperimentAPIObject:
+      type: object
+      required:
+        - experiment_name
+      properties:
+        experiment_name:
+          type: string
+          example: "my_experiment"
+        cluster_name:
+          type: string
+          example: "my_cluster"
+
+    BulkConfig:
+      type: object
+      required:
+        - config_name
+      properties:
+        config_name:
+          type: string
+          example: "default_bulk_config"
+        cluster_name:
+          type: string
+          example: "ocp_cluster"
+        datasources:
+          type: array
+          items:
+            type: string
+        namespaces:
+          type: array
+          items:
+            type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        experiment_types:
+          type: array
+          items:
+            type: string
+        metadata_profile:
+          type: string
+        performance_profile:
+          type: string
+        trial_settings:
+          $ref: '#/components/schemas/TrialSettings'
+        recommendation_settings:
+          $ref: '#/components/schemas/RecommendationSettings'
+        webhook_url:
+          type: string
+          format: uri
+        enabled:
+          type: boolean
+          default: true
+
+    TrialSettings:
+      type: object
+      properties:
+        measurement_duration:
+          type: string
+          example: "15m"
+
+    RecommendationSettings:
+      type: object
+      properties:
+        scheduling:
+          type: string
+          example: "0 0/15 * * * ?"
+        terms:
+          type: array
+          items:
+            type: string
+        models:
+          type: array
+          items:
+            type: string
+
+    BulkConfigUpdateRequest:
+      type: object
+      properties:
+        trial_settings:
+          $ref: '#/components/schemas/TrialSettings'
+        recommendation_settings:
+          $ref: '#/components/schemas/RecommendationSettings'
+        webhook_url:
+          type: string
+          format: uri
+        enabled:
+          type: boolean

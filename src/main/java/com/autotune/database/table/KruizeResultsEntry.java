@@ -22,6 +22,7 @@ import org.hibernate.type.SqlTypes;
 
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * This is a Java class named KruizeResultsEntry annotated with JPA annotations.
@@ -124,5 +125,19 @@ public class KruizeResultsEntry {
 
     public void setCluster_name(String cluster_name) {
         this.cluster_name = cluster_name;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof KruizeResultsEntry)) return false;
+        KruizeResultsEntry that = (KruizeResultsEntry) o;
+        return Objects.equals(experiment_name, that.experiment_name) &&
+                Objects.equals(interval_end_time, that.interval_end_time);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(experiment_name, interval_end_time);
     }
 }

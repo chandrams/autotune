@@ -15,7 +15,6 @@
  *******************************************************************************/
 package com.autotune.database.livenessProbe;
 
-import com.autotune.database.init.KruizeHibernateUtil;
 import org.hibernate.Session;
 import org.hibernate.SessionFactory;
 import org.slf4j.Logger;
@@ -26,7 +25,7 @@ public class TestDBConnection {
 
     public static void main(String[] args) {
         LOGGER.info("Checking Liveliness probe DB connection...");
-        SessionFactory factory = KruizeHibernateUtil.getSessionFactory();
+        SessionFactory factory = io.quarkus.arc.Arc.container().instance(SessionFactory.class).get();
         Session session = factory.openSession();
         session.close();
         LOGGER.info("DB Liveliness probe connection successful!");

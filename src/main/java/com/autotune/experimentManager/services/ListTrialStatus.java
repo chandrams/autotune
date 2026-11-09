@@ -16,6 +16,11 @@
 
 package com.autotune.experimentManager.services;
 
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import io.smallrye.common.annotation.RunOnVirtualThread;
+
 import com.autotune.common.trials.ExperimentTrial;
 import com.autotune.common.trials.ExperimentTrialView;
 import com.autotune.common.trials.TrialDetails;
@@ -29,13 +34,6 @@ import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.servlet.ServletConfig;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
-import java.io.PrintWriter;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -45,50 +43,28 @@ import static com.autotune.analyzer.utils.AnalyzerConstants.ServiceConstants.JSO
 
 /**
  * This class is the handler for the endpoint `listTrialStatus`
- * <p>
  * Returns the status for the requested trial id
  */
-public class ListTrialStatus extends HttpServlet {
-    private static final long serialVersionUID = 1L;
+@Path("/listTrialStatus")
+@Produces(MediaType.APPLICATION_JSON)
+@RunOnVirtualThread
+public class ListTrialStatus {
     private static final Logger LOGGER = LoggerFactory.getLogger(ListTrialStatus.class);
-    ExperimentDetailsMap<String, ExperimentTrial> existingExperiments;
 
-    @Override
-    public void init(ServletConfig config) throws ServletException {
-        super.init(config);
-        this.existingExperiments = (ExperimentDetailsMap<String, ExperimentTrial>) getServletContext().getAttribute(EMConstants.EMKeys.EM_STORAGE_CONTEXT_KEY);
-    }
+    // Populated at startup by QuarkusStartupBean / CDI (mirrors prior servlet pattern).
+    private ExperimentDetailsMap<String, ExperimentTrial> existingExperiments;
 
-    @Override
-    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        String experiment_name = null;
-        String trial_num = null;
-        // Setting off verbose to false by default
-        boolean verbose = false;
+    @GET
+    @RunOnVirtualThread
+    public Response doGet(
+            @QueryParam(EMConstants.InputJsonKeys.ListTrialStatusKeys.EXPERIMENT_NAME) String experiment_name,
+            @QueryParam(EMConstants.InputJsonKeys.ListTrialStatusKeys.TRIAL_NUM) String trial_num,
+            @QueryParam(EMConstants.InputJsonKeys.ListTrialStatusKeys.VERBOSE) String checkVerbose,
+            @QueryParam(EMConstants.InputJsonKeys.ListTrialStatusKeys.DEBUG) String debug) {
 
-        // Extract Experiment Name if exist
-        experiment_name = req.getParameter(EMConstants.InputJsonKeys.ListTrialStatusKeys.EXPERIMENT_NAME);
-        // Extract Trial Number if exist
-        trial_num = req.getParameter(EMConstants.InputJsonKeys.ListTrialStatusKeys.TRIAL_NUM);
-        // Extract Verbose option if exist
-        String checkVerbose = req.getParameter(EMConstants.InputJsonKeys.ListTrialStatusKeys.VERBOSE);
-        // Extract Debug option if exist
-        String debug = req.getParameter(EMConstants.InputJsonKeys.ListTrialStatusKeys.DEBUG);
-
-        if (null != checkVerbose && checkVerbose.equalsIgnoreCase("true")) {
-            verbose = true;
-        }
-
-        resp.setContentType(JSON_CONTENT_TYPE);
-        resp.setCharacterEncoding(CHARACTER_ENCODING);
-        resp.setStatus(HttpServletResponse.SC_CREATED);
-        PrintWriter out = resp.getWriter();
-        JSONObject returnJson = new JSONObject();
+        boolean verbose = null != checkVerbose && checkVerbose.equalsIgnoreCase("true");
 
         if (null != debug) {
-            resp.setContentType(JSON_CONTENT_TYPE);
-            resp.setCharacterEncoding(CHARACTER_ENCODING);
-            resp.setStatus(HttpServletResponse.SC_CREATED);
             HashMap<String, ExperimentTrialView> experimentTrialViews = new HashMap<>();
             this.existingExperiments.forEach((expName, experimentObj) -> {
                 ExperimentTrial eObj = (ExperimentTrial) experimentObj;
@@ -107,67 +83,66 @@ public class ListTrialStatus extends HttpServlet {
                 experimentTrialView.setTrialDetails(trialMetaDataLinkedHashMap);
                 experimentTrialViews.put(eObj.getExperimentName(), experimentTrialView);
             });
-            out = resp.getWriter();
-            out.append(
-                    new Gson().toJson(
-                            experimentTrialViews
-                    )
-            );
-        } else {
-            JSONObject responseJson = new JSONObject();
-            if (null == experiment_name && null == trial_num) {
-                this.existingExperiments.forEach((expName, experimentTObj) -> {
-                    ExperimentTrial eobj = (ExperimentTrial) experimentTObj;
-                    responseJson.put((String) expName, new JSONObject().put("Status", eobj.getStatus()));
-                });
-            } else if (null != experiment_name && null != trial_num) {
-                String finalTrial_num = trial_num;
-                if (verbose) {
-                    LOGGER.debug("In verbose");
-                    if (this.existingExperiments.containsKey(experiment_name)) {
-                        LOGGER.debug("Experiment name found - " + experiment_name);
-                        ExperimentTrial experimentTrial = (ExperimentTrial) this.existingExperiments.get(experiment_name);
-                        if (experimentTrial.getTrialDetails().containsKey(trial_num)) {
-                            LOGGER.debug("Response JSON before - " + responseJson.toString(2));
-                            responseJson.put(finalTrial_num, EMUtil.getLiveMetricData(experimentTrial, trial_num));
-                            LOGGER.debug("Response JSON after - " + responseJson.toString(2));
-                        } else {
-                            responseJson.put("ERROR", "Trial Number " + trial_num + " doesn't exist");
-                        }
+            return Response.status(Response.Status.CREATED).entity(new Gson().toJson(experimentTrialViews)).build();
+        }
+
+        JSONObject responseJson = new JSONObject();
+        if (null == experiment_name && null == trial_num) {
+            this.existingExperiments.forEach((expName, experimentTObj) -> {
+                ExperimentTrial eobj = (ExperimentTrial) experimentTObj;
+                responseJson.put((String) expName, new JSONObject().put("Status", eobj.getStatus()));
+            });
+        } else if (null != experiment_name && null != trial_num) {
+            String finalTrial_num = trial_num;
+            if (verbose) {
+                LOGGER.debug("In verbose");
+                if (this.existingExperiments.containsKey(experiment_name)) {
+                    LOGGER.debug("Experiment name found - " + experiment_name);
+                    ExperimentTrial experimentTrial = (ExperimentTrial) this.existingExperiments.get(experiment_name);
+                    if (experimentTrial.getTrialDetails().containsKey(trial_num)) {
+                        LOGGER.debug("Response JSON before - " + responseJson.toString(2));
+                        responseJson.put(finalTrial_num, EMUtil.getLiveMetricData(experimentTrial, trial_num));
+                        LOGGER.debug("Response JSON after - " + responseJson.toString(2));
+                    } else {
+                        responseJson.put("ERROR", "Trial Number " + trial_num + " doesn't exist");
                     }
-                } else {
-                    this.existingExperiments.forEach((expName, experimentTObj) -> {
-                        ExperimentTrial eobj = (ExperimentTrial) experimentTObj;
-                        TrialDetails trialDetails = eobj.getTrialDetails().get(finalTrial_num);
-                        JSONObject trailDetailJsonObj = new JSONObject(new Gson().toJson(trialDetails));
-                        JSONObject dummyJson = ExperimentTrialHandler.getDummyMetricJson(eobj);
-                        trailDetailJsonObj.put("deployments", dummyJson.get("deployments"));
-                        trailDetailJsonObj.put("experiment_name", dummyJson.get("experiment_name"));
-                        trailDetailJsonObj.put("deployment_name", dummyJson.get("deployment_name"));
-                        responseJson.put(finalTrial_num, trailDetailJsonObj);
-                    });
                 }
-            } else if (null != experiment_name) {
+            } else {
                 this.existingExperiments.forEach((expName, experimentTObj) -> {
                     ExperimentTrial eobj = (ExperimentTrial) experimentTObj;
-                    ((ExperimentTrial) experimentTObj).getTrialDetails().forEach((trialNum, trialDetail) -> {
-                        JSONObject trailDetailJsonObj = new JSONObject(new Gson().toJson(trialDetail));
-                        JSONObject dummyJson = ExperimentTrialHandler.getDummyMetricJson(eobj);
-                        trailDetailJsonObj.put("deployments", dummyJson.get("deployments"));
-                        trailDetailJsonObj.put("experiment_name", dummyJson.get("experiment_name"));
-                        trailDetailJsonObj.put("deployment_name", dummyJson.get("deployment_name"));
-                        responseJson.put(trialNum, trailDetailJsonObj);
-                    });
+                    TrialDetails trialDetails = eobj.getTrialDetails().get(finalTrial_num);
+                    JSONObject trailDetailJsonObj = new JSONObject(new Gson().toJson(trialDetails));
+                    JSONObject dummyJson = ExperimentTrialHandler.getDummyMetricJson(eobj);
+                    trailDetailJsonObj.put("deployments", dummyJson.get("deployments"));
+                    trailDetailJsonObj.put("experiment_name", dummyJson.get("experiment_name"));
+                    trailDetailJsonObj.put("deployment_name", dummyJson.get("deployment_name"));
+                    responseJson.put(finalTrial_num, trailDetailJsonObj);
                 });
             }
-            out = resp.getWriter();
-            out.append(responseJson.toString());
+        } else if (null != experiment_name) {
+            this.existingExperiments.forEach((expName, experimentTObj) -> {
+                ExperimentTrial eobj = (ExperimentTrial) experimentTObj;
+                ((ExperimentTrial) experimentTObj).getTrialDetails().forEach((trialNum, trialDetail) -> {
+                    JSONObject trailDetailJsonObj = new JSONObject(new Gson().toJson(trialDetail));
+                    JSONObject dummyJson = ExperimentTrialHandler.getDummyMetricJson(eobj);
+                    trailDetailJsonObj.put("deployments", dummyJson.get("deployments"));
+                    trailDetailJsonObj.put("experiment_name", dummyJson.get("experiment_name"));
+                    trailDetailJsonObj.put("deployment_name", dummyJson.get("deployment_name"));
+                    responseJson.put(trialNum, trailDetailJsonObj);
+                });
+            });
         }
-        out.flush();
+
+        return Response.status(Response.Status.CREATED).entity(responseJson.toString()).build();
     }
 
-    @Override
-    protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        doGet(req, resp);
+    @POST
+    @RunOnVirtualThread
+    public Response doPost(
+            @QueryParam(EMConstants.InputJsonKeys.ListTrialStatusKeys.EXPERIMENT_NAME) String experiment_name,
+            @QueryParam(EMConstants.InputJsonKeys.ListTrialStatusKeys.TRIAL_NUM) String trial_num,
+            @QueryParam(EMConstants.InputJsonKeys.ListTrialStatusKeys.VERBOSE) String checkVerbose,
+            @QueryParam(EMConstants.InputJsonKeys.ListTrialStatusKeys.DEBUG) String debug) {
+        return doGet(experiment_name, trial_num, checkVerbose, debug);
     }
 }

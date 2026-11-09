@@ -71,10 +71,8 @@ public class KruizeLMExperimentEntry {
     private JsonNode meta_data;
     @Enumerated(EnumType.STRING)
     private AnalyzerConstants.ExperimentType experiment_type;
-    @Temporal(TemporalType.TIMESTAMP)
     @Column(name = "creation_date", updatable = false)
     private Timestamp creation_date;
-    @Temporal(TemporalType.TIMESTAMP)
     @Column(name = "updated_date")
     private Timestamp updated_date;
 

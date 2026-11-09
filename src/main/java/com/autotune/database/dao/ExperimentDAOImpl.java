@@ -22,7 +22,6 @@ import com.autotune.analyzer.utils.AnalyzerConstants;
 import com.autotune.analyzer.utils.AnalyzerErrorConstants;
 import com.autotune.common.data.ValidationOutputData;
 import com.autotune.database.helper.DBConstants;
-import com.autotune.database.init.KruizeHibernateUtil;
 import com.autotune.database.table.*;
 import com.autotune.database.table.lm.*;
 import com.autotune.utils.KruizeConstants;
@@ -57,6 +56,10 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     private static final long serialVersionUID = 1L;
     private static final Logger LOGGER = LoggerFactory.getLogger(ExperimentDAOImpl.class);
 
+    private Session getSession() {
+        return io.quarkus.arc.Arc.container().instance(org.hibernate.SessionFactory.class).get().openSession();
+    }
+
     @Override
     public synchronized ValidationOutputData addExperimentToDB(KruizeExperimentEntry kruizeExperimentEntry) {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
@@ -64,7 +67,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerAddExpDB = Timer.start(MetricsConfig.meterRegistry());
         try {
-            try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            try (Session session = getSession()) {
                 try {
                     tx = session.beginTransaction();
                     session.persist(kruizeExperimentEntry);
@@ -101,7 +104,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerAddExpDB = Timer.start(MetricsConfig.meterRegistry());
         try {
-            try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            try (Session session = getSession()) {
                 try {
                     tx = session.beginTransaction();
                     session.persist(kruizeLMExperimentEntry);
@@ -153,7 +156,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         calendar.add(Calendar.DAY_OF_YEAR, -thresholdDaysCount);
         Date cutoffDate = calendar.getTime();
         String yyyyMMdd = "yyyyMMdd";
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             List<String> tablenames = session.createNativeQuery(SELECT_ALL_KRUIZE_TABLES).getResultList();
             for (String tableName : tablenames) {   // Since tableName cannot be null, there is no need to implement null handling; it can be skipped.
                 String datePart = null;
@@ -187,7 +190,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     @Override
     public void addPartitions(String tableName, String month, String year, int dayOfTheMonth, String partitionType) {
         Transaction tx;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             tx = session.beginTransaction();
             // Create a YearMonth object
             YearMonth yearMonth = YearMonth.of(Integer.parseInt(year), Integer.parseInt(month));
@@ -228,7 +231,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         Transaction tx = null;
         String statusValue = "failure";
         Timer.Sample timerAddResultsDB = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 session.persist(resultsEntry);
@@ -271,7 +274,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         Transaction tx = null;
         String statusValue = "failure";
         Timer.Sample timerAddBulkResultsDB = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             for (KruizeResultsEntry entry : kruizeResultsEntries) {
                 tx = session.beginTransaction();
                 try {
@@ -300,7 +303,9 @@ public class ExperimentDAOImpl implements ExperimentDAO {
                     } else if (message.contains(DBConstants.DB_MESSAGES.NO_PARTITION_RELATION)) {
                         try {
                             LOGGER.debug(DBConstants.DB_MESSAGES.CREATE_PARTITION_RETRY);
-                            tx.commit();
+                            // Under JTA (Quarkus/Narayana) a SQL error marks the transaction STATUS_ROLLEDBACK;
+                            // committing it throws "JTA TransactionManager.commit() failed". Roll back instead.
+                            try { tx.rollback(); } catch (Exception ignored) {}
                             tx = session.beginTransaction();
                             // create partitions based on entry object
                             synchronized (new Object()) {
@@ -383,7 +388,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         Transaction tx = null;
         String statusValue = "failure";
         Timer.Sample timerAddRecDB = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 KruizeRecommendationEntry existingRecommendationEntry = loadRecommendationsByExperimentNameAndDate(recommendationEntry.getExperiment_name(), recommendationEntry.getCluster_name(), recommendationEntry.getInterval_end_time());
                 if (null == existingRecommendationEntry) {
@@ -425,7 +430,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         Transaction tx = null;
         String statusValue = "failure";
         Timer.Sample timerAddRecDB = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 KruizeLMRecommendationEntry existingRecommendationEntry = loadLMRecommendationsByExperimentNameAndDate(recommendationEntry.getExperiment_name(), recommendationEntry.getCluster_name(), recommendationEntry.getInterval_end_time());
                 if (null == existingRecommendationEntry) {
@@ -467,7 +472,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerAddPerfProfileDB = Timer.start(MetricsConfig.meterRegistry());
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 session.persist(kruizePerformanceProfileEntry);
@@ -504,7 +509,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerUpdatePerfProfileDB = Timer.start(MetricsConfig.meterRegistry());
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 // Overwrites all the values in the DB with this entry
@@ -543,7 +548,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerAddMetricProfileDB = Timer.start(MetricsConfig.meterRegistry());
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 session.persist(kruizeMetricProfileEntry);
@@ -577,7 +582,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerAddMetadataProfileDB = Timer.start(MetricsConfig.meterRegistry());
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 session.persist(kruizeMetadataProfileEntry);
@@ -615,7 +620,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerUpdateMetadataProfileDB = Timer.start(MetricsConfig.meterRegistry());
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 Query query = session.createQuery(UPDATE_METADATA_PROFILE_TO_DB, null);
@@ -667,7 +672,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerAddLayerDB = Timer.start(MetricsConfig.meterRegistry());
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             tx = session.beginTransaction();
             session.persist(kruizeLayerEntry);
             tx.commit();
@@ -700,10 +705,10 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     @Override
     public ValidationOutputData addDataSourceToDB(KruizeDataSourceEntry kruizeDataSourceEntry, ValidationOutputData validationOutputData) {
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
-                KruizeAuthenticationEntry kruizeAuthenticationEntry = session.get(KruizeAuthenticationEntry.class, validationOutputData.getAuthEntryId());
+                KruizeAuthenticationEntry kruizeAuthenticationEntry = session.find(KruizeAuthenticationEntry.class, validationOutputData.getAuthEntryId());
                 kruizeDataSourceEntry.setKruizeAuthenticationEntry(kruizeAuthenticationEntry);
                 session.persist(kruizeDataSourceEntry);
                 tx.commit();
@@ -731,7 +736,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     public ValidationOutputData addMetadataToDB(KruizeDSMetadataEntry kruizeDSMetadataEntry) {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 session.persist(kruizeDSMetadataEntry);
@@ -762,7 +767,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
         Transaction tx = null;
         Long authId;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 session.persist(kruizeAuthenticationEntry);
@@ -798,10 +803,10 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerSaveBulkJobDB = Timer.start(MetricsConfig.meterRegistry());
         try {
-            try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+            try (Session session = getSession()) {
                 try {
                     tx = session.beginTransaction();
-                    session.saveOrUpdate(kruizeBulkJobEntry);
+                    session.merge(kruizeBulkJobEntry);
                     tx.commit();
                     // TODO: remove native sql query and transient
                     validationOutputData.setSuccess(true);
@@ -842,7 +847,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         KruizeBulkJobEntry kruizeBulkJobEntry = null;
         String statusValue = "failure";
         Timer.Sample timerGetBulkJobDB = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             kruizeBulkJobEntry = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_BULKJOBS_BY_JOB_ID, KruizeBulkJobEntry.class)
                     .setParameter("jobId", jobId).getSingleResult();
             statusValue = "success";
@@ -892,7 +897,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
         String statusValue = "failure";
         Timer.Sample timerGetBulkJobDB = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             // Construct JSON paths for notification and recommendations fields
             String notificationPath = "{experiments,\"" + experimentName + "\",notification}";
             String recommendationPath = "{experiments,\"" + experimentName + "\",recommendations}";
@@ -950,7 +955,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerUpdateExperiment = Timer.start(MetricsConfig.meterRegistry());
 
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
 
             session.beginTransaction();
             session.createNativeQuery(UPDATE_EXPERIMENTS_DATE)
@@ -983,7 +988,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     public ValidationOutputData deletePerformanceProfileByName(String perfProfileName) {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 Query query = session.createQuery(DELETE_FROM_PERFORMANCE_PROFILE_BY_NAME, null);
@@ -1019,7 +1024,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         Long experimentsCount;
         String statusValue = "failure";
         Timer.Sample timerLoadExpName = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             experimentsCount = session.createQuery(SELECT_COUNT_FROM_EXPERIMENTS_BY_PROFILE_NAME, Long.class)
                     .setParameter("performanceProfile", perfProfileName).uniqueResult();
             statusValue = "success";
@@ -1056,7 +1061,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     public ValidationOutputData deleteKruizeExperimentEntryByName(String experimentName) {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 Query query = session.createQuery(DELETE_FROM_EXPERIMENTS_BY_EXP_NAME, null);
@@ -1105,7 +1110,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     public ValidationOutputData deleteKruizeLMExperimentEntryByName(String experimentName) {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 Query query = session.createQuery(DELETE_FROM_LM_EXPERIMENTS_BY_EXP_NAME, null);
@@ -1147,7 +1152,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     public ValidationOutputData deleteKruizeDSMetadataEntryByName(String dataSourceName) {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 Query query = session.createQuery(DELETE_FROM_METADATA_BY_DATASOURCE_NAME, null);
@@ -1186,7 +1191,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     public ValidationOutputData deleteKruizeMetricProfileEntryByName(String metricProfileName) {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 Query query = session.createQuery(DELETE_FROM_METRIC_PROFILE_BY_PROFILE_NAME, null);
@@ -1226,7 +1231,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     public ValidationOutputData deleteKruizeLMMetadataProfileEntryByName(String metadataProfileName) {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 Query query = session.createQuery(DELETE_FROM_METADATA_PROFILE_BY_PROFILE_NAME, null);
@@ -1260,7 +1265,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         List<KruizeExperimentEntry> entries = null;
         String statusValue = "failure";
         Timer.Sample timerLoadAllExp = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_EXPERIMENTS, KruizeExperimentEntry.class).list();
             statusValue = "success";
         } catch (Exception e) {
@@ -1281,7 +1286,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         List<KruizeLMExperimentEntry> entries = null;
         String statusValue = "failure";
         Timer.Sample timerLoadAllExp = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_LM_EXPERIMENTS, KruizeLMExperimentEntry.class).list();
             // TODO: remove native sql query and transient
             //getExperimentTypeInKruizeExperimentEntry(entries);
@@ -1305,7 +1310,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         List<KruizeResultsEntry> kruizeResultsEntries = null;
         String statusValue = "failure";
         Timer.Sample timerLoadAllResults = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             kruizeResultsEntries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_RESULTS, KruizeResultsEntry.class).list();
             statusValue = "success";
         } catch (Exception e) {
@@ -1326,7 +1331,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         List<KruizeRecommendationEntry> recommendationEntries = null;
         String statusValue = "failure";
         Timer.Sample timerLoadAllRec = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             recommendationEntries = session.createQuery(
                     DBConstants.SQLQUERY.SELECT_FROM_RECOMMENDATIONS,
                     KruizeRecommendationEntry.class).list();
@@ -1348,7 +1353,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         List<KruizeLMRecommendationEntry> recommendationEntries = null;
         String statusValue = "failure";
         Timer.Sample timerLoadAllRec = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             if (null != bulkJobId && !bulkJobId.isEmpty()) {
                 recommendationEntries = session.createQuery(SELECT_FROM_LM_RECOMMENDATIONS_BY_JOB_ID,
                                 KruizeLMRecommendationEntry.class)
@@ -1377,7 +1382,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerLoadAllPerfProfiles = Timer.start(MetricsConfig.meterRegistry());
         List<KruizePerformanceProfileEntry> entries = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_PERFORMANCE_PROFILE, KruizePerformanceProfileEntry.class).list();
         } catch (Exception e) {
             LOGGER.error("Not able to load Performance Profile  due to {}", e.getMessage());
@@ -1402,7 +1407,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerLoadAllMetricProfiles = Timer.start(MetricsConfig.meterRegistry());
         List<KruizeMetricProfileEntry> entries = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_METRIC_PROFILE, KruizeMetricProfileEntry.class).list();
         } catch (Exception e) {
             LOGGER.error("Not able to load Metric Profile  due to {}", e.getMessage());
@@ -1423,7 +1428,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         Timer.Sample timerLoadAllMetadataProfiles = Timer.start(MetricsConfig.meterRegistry());
 
         List<KruizeLMMetadataProfileEntry> entries = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_METADATA_PROFILE, KruizeLMMetadataProfileEntry.class).list();
         } catch (Exception e) {
             LOGGER.error("Not able to load Metadata Profile  due to {}", e.getMessage());
@@ -1449,7 +1454,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         Timer.Sample timerLoadAllLayers = Timer.start(MetricsConfig.meterRegistry());
 
         List<KruizeLMLayerEntry> entries = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_LAYER, KruizeLMLayerEntry.class).list();
             statusValue = "success";
         } catch (Exception e) {
@@ -1477,7 +1482,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         Timer.Sample timerLoadLayerByName = Timer.start(MetricsConfig.meterRegistry());
 
         List<KruizeLMLayerEntry> entries = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_LAYER_BY_NAME, KruizeLMLayerEntry.class)
                     .setParameter("layerName", layerName).list();
             statusValue = "success";
@@ -1499,7 +1504,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         List<KruizeLMExperimentEntry> entries = null;
         String statusValue = "failure";
         Timer.Sample timerLoadExpName = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_LM_EXPERIMENTS_BY_EXP_NAME, KruizeLMExperimentEntry.class)
                     .setParameter("experimentName", experimentName).list();
             // TODO: remove native sql query and transient
@@ -1524,7 +1529,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         List<KruizeExperimentEntry> entries = null;
         String statusValue = "failure";
         Timer.Sample timerLoadExpName = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_EXPERIMENTS_BY_EXP_NAME, KruizeExperimentEntry.class)
                     .setParameter("experimentName", experimentName).list();
             // TODO: remove native sql query and transient
@@ -1554,7 +1559,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         List<KruizeExperimentEntry> entries;
         String statusValue = "failure";
         Timer.Sample timerLoadExpName = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             // assuming there will be only one container
             ContainerAPIObject containerAPIObject = kubernetesAPIObject.getContainerAPIObjects().get(0);
             // Set parameters for KubernetesObject and Container
@@ -1586,7 +1591,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         List<KruizeLMExperimentEntry> entries;
         String statusValue = "failure";
         Timer.Sample timerLoadExpName = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             // assuming there will be only one container
             ContainerAPIObject containerAPIObject = kubernetesAPIObject.getContainerAPIObjects().get(0);
             // Set parameters for KubernetesObject and Container
@@ -1625,7 +1630,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
             clusterCondtionSql = String.format(" and k.%s is null ", KruizeConstants.JSONKeys.CLUSTER_NAME);
         Timer.Sample timerLoadResultsExpName = Timer.start(MetricsConfig.meterRegistry());
         LOGGER.debug("startTime : {} , endTime : {}", calculated_start_time, interval_end_time);
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             if (null != calculated_start_time && null != interval_end_time) {
                 Query<KruizeResultsEntry> kruizeResultsEntryQuery = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_RESULTS_BY_EXP_NAME_AND_DATE_RANGE_AND_LIMIT + clusterCondtionSql, KruizeResultsEntry.class)
                         .setParameter(KruizeConstants.JSONKeys.EXPERIMENT_NAME, experimentName)
@@ -1657,7 +1662,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         List<KruizeRecommendationEntry> recommendationEntries = null;
         String statusValue = "failure";
         Timer.Sample timerLoadRecExpName = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             recommendationEntries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_RECOMMENDATIONS_BY_EXP_NAME, KruizeRecommendationEntry.class)
                     .setParameter("experimentName", experimentName).list();
             statusValue = "success";
@@ -1678,7 +1683,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         List<KruizeLMRecommendationEntry> recommendationEntries = null;
         String statusValue = "failure";
         Timer.Sample timerLoadRecExpName = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             if (null != bulkJobId) {
                 recommendationEntries = session.createQuery(SELECT_FROM_LM_RECOMMENDATIONS_BY_EXP_NAME_BY_JOB_ID, KruizeLMRecommendationEntry.class)
                         .setParameter("experimentName", experimentName)
@@ -1712,7 +1717,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
             clusterCondtionSql = String.format(" and k.%s is null ", KruizeConstants.JSONKeys.CLUSTER_NAME);
 
         Timer.Sample timerLoadRecExpNameDate = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             Query<KruizeRecommendationEntry> kruizeRecommendationEntryQuery = session.createQuery(SELECT_FROM_RECOMMENDATIONS_BY_EXP_NAME_AND_END_TIME + clusterCondtionSql, KruizeRecommendationEntry.class)
                     .setParameter(KruizeConstants.JSONKeys.EXPERIMENT_NAME, experimentName)
                     .setParameter(KruizeConstants.JSONKeys.INTERVAL_END_TIME, interval_end_time);
@@ -1746,7 +1751,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
             clusterCondtionSql = String.format(" and k.%s is null ", KruizeConstants.JSONKeys.CLUSTER_NAME);
 
         Timer.Sample timerLoadRecExpNameDate = Timer.start(MetricsConfig.meterRegistry());
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             Query<KruizeLMRecommendationEntry> kruizeRecommendationEntryQuery = session.createQuery(SELECT_FROM_LM_RECOMMENDATIONS_BY_EXP_NAME_AND_END_TIME + clusterCondtionSql, KruizeLMRecommendationEntry.class)
                     .setParameter(KruizeConstants.JSONKeys.EXPERIMENT_NAME, experimentName)
                     .setParameter(KruizeConstants.JSONKeys.INTERVAL_END_TIME, interval_end_time);
@@ -1774,7 +1779,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerLoadPerfProfileName = Timer.start(MetricsConfig.meterRegistry());
         List<KruizePerformanceProfileEntry> entries = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_PERFORMANCE_PROFILE_BY_NAME, KruizePerformanceProfileEntry.class)
                     .setParameter("name", performanceProfileName).list();
         } catch (Exception e) {
@@ -1800,7 +1805,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerLoadMetricProfileName = Timer.start(MetricsConfig.meterRegistry());
         List<KruizeMetricProfileEntry> entries = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_METRIC_PROFILE_BY_NAME, KruizeMetricProfileEntry.class)
                     .setParameter("name", metricProfileName).list();
         } catch (Exception e) {
@@ -1821,7 +1826,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
         String statusValue = "failure";
         Timer.Sample timerLoadMetadataProfileName = Timer.start(MetricsConfig.meterRegistry());
         List<KruizeLMMetadataProfileEntry> entries = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             entries = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_METADATA_PROFILE_BY_NAME, KruizeLMMetadataProfileEntry.class)
                     .setParameter("name", metadataProfileName).list();
         } catch (Exception e) {
@@ -1844,7 +1849,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
             clusterCondtionSql = String.format(" and k.%s = :%s ", KruizeConstants.JSONKeys.CLUSTER_NAME, KruizeConstants.JSONKeys.CLUSTER_NAME);
         else
             clusterCondtionSql = String.format(" and k.%s is null ", KruizeConstants.JSONKeys.CLUSTER_NAME);
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             Query<KruizeResultsEntry> kruizeResultsEntryQuery = null;
             if (interval_start_time != null && interval_end_time != null) {
                 kruizeResultsEntryQuery = session.createQuery(SELECT_FROM_RESULTS_BY_EXP_NAME_AND_START_END_TIME + clusterCondtionSql, KruizeResultsEntry.class)
@@ -1891,7 +1896,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     @Override
     public List<KruizeDSMetadataEntry> loadMetadataByName(String dataSourceName) throws Exception {
         List<KruizeDSMetadataEntry> kruizeMetadataList;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             kruizeMetadataList = session.createQuery(SELECT_FROM_METADATA_BY_DATASOURCE_NAME, KruizeDSMetadataEntry.class)
                     .setParameter("dataSourceName", dataSourceName).list();
         } catch (Exception e) {
@@ -1912,7 +1917,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     @Override
     public List<KruizeDSMetadataEntry> loadMetadataByClusterName(String dataSourceName, String clusterName) throws Exception {
         List<KruizeDSMetadataEntry> kruizeMetadataList;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             Query<KruizeDSMetadataEntry> kruizeMetadataQuery = session.createQuery(SELECT_FROM_METADATA_BY_DATASOURCE_NAME_AND_CLUSTER_NAME, KruizeDSMetadataEntry.class)
                     .setParameter("datasource_name", dataSourceName)
                     .setParameter("cluster_name", clusterName);
@@ -1937,7 +1942,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
      */
     public List<KruizeDSMetadataEntry> loadMetadataByNamespace(String dataSourceName, String clusterName, String namespace) throws Exception {
         List<KruizeDSMetadataEntry> kruizeMetadataList;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             Query<KruizeDSMetadataEntry> kruizeMetadataQuery = session.createQuery(SELECT_FROM_METADATA_BY_DATASOURCE_NAME_CLUSTER_NAME_AND_NAMESPACE, KruizeDSMetadataEntry.class)
                     .setParameter("datasource_name", dataSourceName)
                     .setParameter("cluster_name", clusterName)
@@ -1959,7 +1964,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     @Override
     public List<KruizeDataSourceEntry> loadDataSourceByName(String name) throws Exception {
         List<KruizeDataSourceEntry> kruizeDataSourceList;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             kruizeDataSourceList = session.createQuery(DBConstants.SQLQUERY.SELECT_FROM_DATASOURCE_BY_NAME, KruizeDataSourceEntry.class)
                     .setParameter("name", name).list();
         } catch (Exception e) {
@@ -1975,7 +1980,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     @Override
     public List<KruizeDataSourceEntry> loadAllDataSources() throws Exception {
         List<KruizeDataSourceEntry> entries;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             entries = session.createQuery(SELECT_FROM_DATASOURCE, KruizeDataSourceEntry.class).list();
         } catch (Exception e) {
             LOGGER.error("Not able to load datasource: {}", e.getMessage());
@@ -1985,7 +1990,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     }
 
    /* private void getExperimentTypeInKruizeExperimentEntry(List<KruizeExperimentEntry> entries) throws Exception {
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             for (KruizeExperimentEntry entry : entries) {
                 if (isTargetCluserLocal(entry.getTarget_cluster())) {
                     if (null == entry.getE || entry.getExperimentType().isEmpty()) {
@@ -2006,7 +2011,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     }*/
 
     /*private void updateExperimentTypeInKruizeExperimentEntry(KruizeLMExperimentEntry kruizeLMExperimentEntry) throws Exception {
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             if (isTargetCluserLocal(kruizeLMExperimentEntry.getTarget_cluster())) {
                 Transaction tx = session.beginTransaction();
                 String sql = DBConstants.SQLQUERY.UPDATE_EXPERIMENT_EXP_TYPE;
@@ -2023,7 +2028,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     }
 
     private void updateExperimentTypeInKruizeExperimentEntry(KruizeExperimentEntry kruizeExperimentEntry) throws Exception {
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             if (isTargetCluserLocal(kruizeExperimentEntry.getTarget_cluster())) {
                 Transaction tx = session.beginTransaction();
                 String sql = DBConstants.SQLQUERY.UPDATE_EXPERIMENT_EXP_TYPE;
@@ -2063,7 +2068,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     public ValidationOutputData addBulkConfigToDB(KruizeBulkConfigEntry kruizeBulkConfigEntry) {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 session.persist(kruizeBulkConfigEntry);
@@ -2104,7 +2109,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     public KruizeBulkConfigEntry loadBulkConfigByName(String configName) throws Exception {
         KruizeBulkConfigEntry kruizeBulkConfigEntry = null;
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 Query<KruizeBulkConfigEntry> query = session.createQuery(
@@ -2141,7 +2146,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     public List<KruizeBulkConfigEntry> loadAllBulkConfigs() throws Exception {
         List<KruizeBulkConfigEntry> bulkConfigs = new ArrayList<>();
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 Query<KruizeBulkConfigEntry> query = session.createQuery(
@@ -2175,7 +2180,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     public ValidationOutputData updateBulkConfigToDB(KruizeBulkConfigEntry kruizeBulkConfigEntry) {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 session.merge(kruizeBulkConfigEntry);
@@ -2208,7 +2213,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     public ValidationOutputData deleteBulkConfigByName(String configName) {
         ValidationOutputData validationOutputData = new ValidationOutputData(false, null, null);
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 Query query = session.createQuery(
@@ -2252,7 +2257,7 @@ public class ExperimentDAOImpl implements ExperimentDAO {
     public List<KruizeBulkConfigEntry> loadEnabledBulkConfigs() throws Exception {
         List<KruizeBulkConfigEntry> bulkConfigs = new ArrayList<>();
         Transaction tx = null;
-        try (Session session = KruizeHibernateUtil.getSessionFactory().openSession()) {
+        try (Session session = getSession()) {
             try {
                 tx = session.beginTransaction();
                 Query<KruizeBulkConfigEntry> query = session.createQuery(

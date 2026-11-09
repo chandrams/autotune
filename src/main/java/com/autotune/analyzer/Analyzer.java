@@ -17,18 +17,21 @@ package com.autotune.analyzer;
 
 import com.autotune.analyzer.metadataProfiles.MetadataProfileDeployment;
 import com.autotune.analyzer.performanceProfiles.PerformanceProfilesDeployment;
-import com.autotune.analyzer.services.*;
 import com.autotune.operator.KruizeDeploymentInfo;
 import com.autotune.operator.KruizeOperator;
-import com.autotune.utils.ServerContext;
-import org.eclipse.jetty.ee8.servlet.ServletContextHandler;
 
+/**
+ * Analyzer startup helper — loads performance/metadata profiles and KruizeObjects.
+ * Servlet registration has been removed; all endpoints are wired via JAX-RS {@code @Path}.
+ * Called from {@link com.autotune.operator.KruizeStartupBean} on {@code StartupEvent}.
+ */
 public class Analyzer {
-    public static void start(ServletContextHandler contextHandler) {
-        KruizeOperator kruizeOperator = new KruizeOperator();
 
+    private Analyzer() {}
+
+    public static void start() {
+        KruizeOperator kruizeOperator = new KruizeOperator();
         try {
-            addServlets(contextHandler);
             PerformanceProfilesDeployment.getPerformanceProfiles(); //  Performance profile should be called first
             if (KruizeDeploymentInfo.local) {
                 MetadataProfileDeployment.getMetadataProfiles();
@@ -37,37 +40,5 @@ public class Analyzer {
         } catch (Exception e) {
             e.printStackTrace();
         }
-    }
-
-    public static void addServlets(ServletContextHandler context) {
-        context.addServlet(ListExperiments.class, ServerContext.LIST_EXPERIMENTS);
-        context.addServlet(CreateExperiment.class, ServerContext.CREATE_EXPERIMENT);
-        context.addServlet(UpdateResults.class, ServerContext.UPDATE_RESULTS);
-        context.addServlet(UpdateRecommendations.class, ServerContext.UPDATE_RECOMMENDATIONS);
-        context.addServlet(GenerateRecommendations.class, ServerContext.GENERATE_RECOMMENDATIONS);
-        context.addServlet(ListRecommendations.class, ServerContext.RECOMMEND_RESULTS);
-        context.addServlet(RecommendationsResource.class, ServerContext.RECOMMENDATIONS);
-        context.addServlet(PerformanceProfileService.class, ServerContext.CREATE_PERF_PROFILE);
-        context.addServlet(PerformanceProfileService.class, ServerContext.LIST_PERF_PROFILES);
-        context.addServlet(PerformanceProfileService.class, ServerContext.UPDATE_PERF_PROFILE);
-        context.addServlet(PerformanceProfileService.class, ServerContext.DELETE_PERF_PROFILE);
-        context.addServlet(MetricProfileService.class, ServerContext.CREATE_METRIC_PROFILE);
-        context.addServlet(MetricProfileService.class, ServerContext.LIST_METRIC_PROFILES);
-        context.addServlet(MetricProfileService.class, ServerContext.DELETE_METRIC_PROFILE);
-        context.addServlet(ListDatasources.class, ServerContext.LIST_DATASOURCES);
-        context.addServlet(DSMetadataService.class, ServerContext.DATASOURCE_METADATA);
-        context.addServlet(BulkService.class, ServerContext.BULK_SERVICE);
-        context.addServlet(BulkConfigService.class, ServerContext.BULK_CONFIG_SERVICE);
-        context.addServlet(MetadataProfileService.class, ServerContext.CREATE_METADATA_PROFILE);
-        context.addServlet(MetadataProfileService.class, ServerContext.LIST_METADATA_PROFILES);
-        context.addServlet(MetadataProfileService.class, ServerContext.DELETE_METADATA_PROFILE);
-        context.addServlet(MetadataProfileService.class, ServerContext.UPDATE_METADATA_PROFILE);
-        context.addServlet(LayerService.class, ServerContext.CREATE_LAYER);
-        context.addServlet(LayerService.class, ServerContext.LIST_LAYERS);
-
-        // Adding UI support API's
-        context.addServlet(ListNamespaces.class, ServerContext.LIST_NAMESPACES);
-        context.addServlet(ListDeploymentsInNamespace.class, ServerContext.LIST_DEPLOYMENTS);
-        context.addServlet(ListSupportedK8sObjects.class, ServerContext.LIST_K8S_OBJECTS);
     }
 }

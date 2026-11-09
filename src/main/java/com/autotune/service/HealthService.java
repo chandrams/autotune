@@ -15,26 +15,29 @@
  *******************************************************************************/
 package com.autotune.service;
 
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
+import io.smallrye.common.annotation.RunOnVirtualThread;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
 
-public class HealthService extends HttpServlet
-{
-	public static final int STATUS_UP = 1;
-	public static final int STATUS_DOWN = 0;
+@Path("/health")
+@RunOnVirtualThread
+public class HealthService {
+    public static final int STATUS_UP = 1;
+    public static final int STATUS_DOWN = 0;
 
-	private static int CURRENT_STATUS = STATUS_UP;
+    private static int CURRENT_STATUS = STATUS_UP;
 
-	@Override
-	protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-		if (CURRENT_STATUS == STATUS_UP) {
-			resp.setStatus(HttpServletResponse.SC_OK);
-			resp.getWriter().println("UP");
-		} else {
-			resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-			resp.getWriter().println("DOWN");
-		}
-	}
+    @GET
+    @RunOnVirtualThread
+    @Produces(MediaType.TEXT_PLAIN)
+    public Response doGet() {
+        if (CURRENT_STATUS == STATUS_UP) {
+            return Response.ok("UP").build();
+        } else {
+            return Response.serverError().entity("DOWN").build();
+        }
+    }
 }

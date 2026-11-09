@@ -1,14 +1,18 @@
 package com.autotune.experimentManager.services;
 
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
+import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import io.smallrye.common.annotation.RunOnVirtualThread;
 
-public class ListExperimentTrail extends HttpServlet {
-    @Override
-    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        resp.setStatus(HttpServletResponse.SC_OK);
-        resp.getWriter().println("UP");
+@Path("/listExperimentTrial")
+@Produces(MediaType.APPLICATION_JSON)
+@RunOnVirtualThread
+public class ListExperimentTrail {
+
+    @GET
+    @RunOnVirtualThread
+    public Response doGet() {
+        return Response.ok("\"UP\"").build();
     }
 }
