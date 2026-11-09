@@ -27,9 +27,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.servlet.http.HttpServletResponse;
-import java.net.InetAddress;
 import java.net.URI;
-import java.net.UnknownHostException;
 import java.util.*;
 
 /**
@@ -314,16 +312,18 @@ public class BulkConfigValidation {
             }
         }
 
-        // Validate trial_settings if provided
-        if (updateRequest.getTrialSettings() != null) {
+        // Validate trial_settings only when it carries meaningful content — reuses
+        // the same guard as hasUpdates() to avoid diverging behaviour.
+        if (updateRequest.hasTrialSettingsUpdate()) {
             ValidationOutputData trialSettingsValidation = validateTrialSettings(updateRequest.getTrialSettings());
             if (!trialSettingsValidation.isSuccess()) {
                 return trialSettingsValidation;
             }
         }
 
-        // Validate recommendation settings if provided (partial validation for updates)
-        if (updateRequest.getRecommendationSettings() != null) {
+        // Validate recommendation_settings only when it carries meaningful content —
+        // reuses the same guard as hasUpdates() to avoid diverging behaviour.
+        if (updateRequest.hasRecommendationSettingsUpdate()) {
             ValidationOutputData settingsValidation = validateRecommendationSettings(updateRequest.getRecommendationSettings(), false);
             if (!settingsValidation.isSuccess()) {
                 return settingsValidation;
@@ -368,13 +368,11 @@ public class BulkConfigValidation {
                     HttpServletResponse.SC_BAD_REQUEST);
         }
 
-        // Validate terms if provided or required
-        if (settings.getTerms() != null) {
-            if (settings.getTerms().isEmpty()) {
-                return new ValidationOutputData(false,
-                        "terms cannot be empty if provided in recommendation_settings",
-                        HttpServletResponse.SC_BAD_REQUEST);
-            }
+        // Validate terms if provided or required.
+        // An empty list is treated as "not provided" because RecommendationSettings
+        // initialises terms/models as new ArrayList<>(), so Jackson deserialises a
+        // missing JSON key as an empty list rather than null.
+        if (settings.getTerms() != null && !settings.getTerms().isEmpty()) {
             for (String term : settings.getTerms()) {
                 if (!VALID_TERMS.contains(term)) {
                     return new ValidationOutputData(false,
@@ -388,13 +386,9 @@ public class BulkConfigValidation {
                     HttpServletResponse.SC_BAD_REQUEST);
         }
 
-        // Validate models if provided or required
-        if (settings.getModels() != null) {
-            if (settings.getModels().isEmpty()) {
-                return new ValidationOutputData(false,
-                        "models cannot be empty if provided in recommendation_settings",
-                        HttpServletResponse.SC_BAD_REQUEST);
-            }
+        // Validate models if provided or required.
+        // Same empty-list-as-absent treatment as terms above.
+        if (settings.getModels() != null && !settings.getModels().isEmpty()) {
             for (String model : settings.getModels()) {
                 if (!VALID_MODELS.contains(model)) {
                     return new ValidationOutputData(false,
@@ -462,7 +456,13 @@ public class BulkConfigValidation {
     }
 
     /**
-     * Validate webhook URL format
+     * Validate webhook URL format.
+     * Only syntax is checked here (scheme and host presence). DNS resolution and
+     * network-reachability checks are intentionally not performed at registration time —
+     * the webhook_url is only called from triggerWebhook() when the bulk job runs,
+     * and the caller is always a trusted internal component. Applying a private-address
+     * DNS blocklist at storage time breaks legitimate in-cluster webhook targets such as
+     * co-deployed optimizer services whose hostnames resolve to RFC 1918 addresses.
      */
     private static ValidationOutputData validateWebhookUrl(String webhookUrl) {
         try {
@@ -480,23 +480,9 @@ public class BulkConfigValidation {
                         "webhook_url must contain a valid hostname",
                         HttpServletResponse.SC_BAD_REQUEST);
             }
-
-            InetAddress address = InetAddress.getByName(host);
-            if (address.isLoopbackAddress()
-                    || address.isLinkLocalAddress()
-                    || address.isSiteLocalAddress()
-                    || address.isAnyLocalAddress()) {
-                return new ValidationOutputData(false,
-                        "webhook_url must not point to a private or internal network address",
-                        HttpServletResponse.SC_BAD_REQUEST);
-            }
         } catch (IllegalArgumentException e) {
             return new ValidationOutputData(false,
                     "Invalid webhook_url format: " + e.getMessage(),
-                    HttpServletResponse.SC_BAD_REQUEST);
-        } catch (UnknownHostException e) {
-            return new ValidationOutputData(false,
-                    "webhook_url hostname cannot be resolved: " + e.getMessage(),
                     HttpServletResponse.SC_BAD_REQUEST);
         }
 

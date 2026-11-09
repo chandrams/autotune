@@ -109,11 +109,9 @@ public class AnalyzerConstants {
     public static final String WORKLOAD = "workload";
     public static final String CONTAINER = "container";
 
-    // Metadata query constants - exact metric names in metadata profiles
-    public static final String WORKLOAD_METADATA_QUERY = "workloadsForAdditionalLabel";
+    // Exact name of the label-filter workload query entry in the metadata profile.
+    // Used to look up the specialised workloadsWithPodLabelFilter entry when pod label filtering is active.
     public static final String WORKLOAD_METADATA_QUERY_WITH_LABEL_FILTER = "workloadsWithPodLabelFilter";
-    public static final String NAMESPACE_METADATA_QUERY = "namespacesForAdditionalLabel";
-    public static final String CONTAINER_METADATA_QUERY = "containersForAdditionalLabel";
 
     public static final int DEFAULT_MEASUREMENT_DURATION_INT = 15;
     public static final String KRUIZE_PROFILE_FILTER = "kruize";
@@ -305,6 +303,8 @@ public class AnalyzerConstants {
         REPLICATION_CONTROLLER,
         DAEMONSET,
         JOB,
+        CONFIGMAP,
+        CATALOGSOURCE,
     }
 
     public enum RegisterRecommendationModelStatus {
@@ -402,6 +402,7 @@ public class AnalyzerConstants {
     }
 
     public enum MetadataProfileQueryIdentifier {
+    // TODO: We're restricting the query identifiers to only container, namespace and workload for now. In the future, we can add more query identifiers.
         NAMESPACE_QUERY_IDENTIFIER(new LinkedHashSet<>(List.of("namespace"))),
 
         WORKLOAD_QUERY_IDENTIFIER(new LinkedHashSet<>(List.of("namespace", "workload", "workload_type"))),
@@ -992,7 +993,6 @@ public class AnalyzerConstants {
         public static final String PROFILE_VERSION = "profileVersion";
         public static final String METADATA = "metadata";
         public static final String K8STYPE = "k8sType";
-        public static final String ADDITIONAL_LABEL = "ADDITIONAL_LABEL";
     }
 
     public static final class CommonProfileMsgs {
@@ -1015,6 +1015,9 @@ public class AnalyzerConstants {
             public static final String REPLICATION_CONTROLLER = "replicationController";
             public static final String DAEMONSET = "daemonset";
             public static final String JOB = "job";
+            public static final String CONFIGMAP = "ConfigMap";
+            public static final String CATALOGSOURCE = "CatalogSource";
+
 
             private Types() {
 
@@ -1153,7 +1156,9 @@ public class AnalyzerConstants {
     public static String getUnsupportedWorkloadTypesFilter() {
         // List of unsupported K8S object types
         List<K8S_OBJECT_TYPES> unsupportedTypes = Arrays.asList(
-            K8S_OBJECT_TYPES.DEPLOYMENT_CONFIG
+            K8S_OBJECT_TYPES.DEPLOYMENT_CONFIG,
+            K8S_OBJECT_TYPES.CONFIGMAP,
+            K8S_OBJECT_TYPES.CATALOGSOURCE
         );
         
         // Build the filter string with case-insensitive regex matching
