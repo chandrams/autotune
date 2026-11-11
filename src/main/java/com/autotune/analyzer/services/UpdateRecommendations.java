@@ -16,6 +16,8 @@
 package com.autotune.analyzer.services;
 
 import com.autotune.analyzer.adapters.DeviceDetailsAdapter;
+import com.autotune.analyzer.adapters.MetricAggregationInfoResultsIntSerializer;
+import com.autotune.analyzer.adapters.MetricMetadataAdapter;
 import com.autotune.analyzer.adapters.RecommendationItemAdapter;
 import com.autotune.analyzer.exceptions.FetchMetricsError;
 import com.autotune.analyzer.kruizeObject.KruizeObject;
@@ -26,6 +28,8 @@ import com.autotune.analyzer.serviceObjects.ListRecommendationsAPIObject;
 import com.autotune.analyzer.utils.AnalyzerConstants;
 import com.autotune.analyzer.utils.AnalyzerErrorConstants;
 import com.autotune.analyzer.utils.GsonUTCDateAdapter;
+import com.autotune.common.data.metrics.MetricAggregationInfoResults;
+import com.autotune.common.data.metrics.MetricMetadata;
 import com.autotune.common.data.result.ContainerData;
 import com.autotune.common.data.system.info.device.DeviceDetails;
 import com.autotune.operator.KruizeDeploymentInfo;
@@ -175,6 +179,8 @@ public class UpdateRecommendations extends HttpServlet {
                     .registerTypeAdapter(Date.class, new GsonUTCDateAdapter())
                     .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
                     .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
+                    .registerTypeAdapter(MetricMetadata.class, new MetricMetadataAdapter())
+                    .registerTypeAdapter(MetricAggregationInfoResults.class, new MetricAggregationInfoResultsIntSerializer())
                     .setExclusionStrategies(strategy)
                     .create();
             gsonStr = gsonObj.toJson(recommendationList);

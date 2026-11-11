@@ -8,12 +8,12 @@ on:
    
 jobs:
   get_pr_number:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       output1: ${{ steps.pr.outputs.pr_number }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Get PR number
         id: pr

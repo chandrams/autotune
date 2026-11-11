@@ -18,10 +18,6 @@ package com.autotune.operator;
 import com.autotune.analyzer.exceptions.ClusterTypeNotSupportedException;
 import com.autotune.analyzer.exceptions.K8sTypeNotSupportedException;
 import com.autotune.analyzer.exceptions.MonitoringAgentNotSupportedException;
-import com.autotune.analyzer.kruizeLayer.layers.ContainerLayer;
-import com.autotune.analyzer.kruizeLayer.layers.GenericLayer;
-import com.autotune.analyzer.kruizeLayer.layers.HotspotLayer;
-import com.autotune.analyzer.kruizeLayer.layers.QuarkusLayer;
 import com.autotune.utils.KruizeConstants;
 import com.autotune.utils.KruizeSupportedTypes;
 import com.autotune.utils.KubeEventLogger;
@@ -68,7 +64,7 @@ public class KruizeDeploymentInfo {
     public static String database_admin_username;
     public static String database_admin_password;
     public static String database_ssl_mode;
-    public static Boolean TEST_USE_ONLY_CACHE_JOB_IN_MEM = false;
+    public static Boolean test_use_only_cache_job_in_mem = false;
     public static String job_filter_to_db = "experiments|status|apis|create|response|status_history|notifications";      //Use this constant to store necessary information into DB also can be set via env variable
     public static String cloudwatch_logs_access_key_id;
     public static String cloudwatch_logs_secret_access_key;
@@ -89,6 +85,7 @@ public class KruizeDeploymentInfo {
     public static int generate_recommendations_date_range_limit_in_days = 15;
     public static Integer delete_partition_threshold_in_days = DELETE_PARTITION_THRESHOLD_IN_DAYS;
     public static String experiment_name_format = "%datasource%|%clustername%|%namespace%|%workloadname%(%workloadtype%)|%containername%";
+    public static String namespace_experiment_name_format = "%datasource%|%clustername%|%namespace%";
     private static Hashtable<String, Class> tunableLayerPair;
     //private static KubernetesClient kubernetesClient;
     private static KubeEventLogger kubeEventLogger;
@@ -108,19 +105,6 @@ public class KruizeDeploymentInfo {
 
 
     private KruizeDeploymentInfo() {
-    }
-
-    public static void setLayerTable() {
-        tunableLayerPair = new Hashtable<String, Class>();
-        tunableLayerPair.put(LAYER_GENERIC, GenericLayer.class);
-        tunableLayerPair.put(LAYER_CONTAINER, ContainerLayer.class);
-        tunableLayerPair.put(LAYER_HOTSPOT, HotspotLayer.class);
-        tunableLayerPair.put(LAYER_QUARKUS, QuarkusLayer.class);
-    }
-
-    // TODO: Need a better way to get the layer class
-    public static Class getLayer(String layerName) {
-        return tunableLayerPair.get(layerName);
     }
 
 

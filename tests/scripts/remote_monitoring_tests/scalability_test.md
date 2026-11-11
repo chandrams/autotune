@@ -21,16 +21,16 @@ Use the below command to test :
 
 ```
 cd <KRUIZE_REPO>/tests/scripts/remote_monitoring_tests/scale_test
-./remote_monitoring_tests/scale_test/remote_monitoring_scale_test_bulk.sh [-i Kruize image] [-r results directory path] [-u No. of experiments (default - 5000)] [-d No. of days of results (default - 15)] [-n No. of clients (default - 20)] [-m results duration interval in mins, (default - 15)] [-t interval hours (default - 6)] [-s Initial start date (default - 2023-01-10T00:00:00.000Z)] [-q query db interval in mins, (default - 10)]
+./remote_monitoring_scale_test_bulk.sh [-i Kruize image] [-r results directory path] [-u No. of experiments (default - 5000)] [-d No. of days of results (default - 15)] [-n No. of clients (default - 20)] [-m results duration interval in mins, (default - 15)] [-t interval hours (default - 6)] [-s Initial start date (default - 2023-01-10T00:00:00.000Z)] [-q query db interval in mins, (default - 10)] [-c Experiment type [container|namespace|container_ns|gpucontainer] (default - container)] [-g No. of kruize replicas (default - 10)] [--api-version=<v1|legacy>]
 ```
 
 Where values for remote_monitoring_scale_test_bulk.sh are:
 
 ```
 usage: remote_monitoring_fault_tolerant_tests.sh 
-        [ -i ] : optional. Kruize docker image to be used for testing
-                 default - quay.io/kruize/autotune:mvp_demo
-	[ -r ] : Results directory path
+    [ -i ] : optional. Kruize docker image to be used for testing
+             default - quay.io/kruize/autotune:mvp_demo
+    [ -r ] : Results directory path
 	[-u No. of experiments (default - 5000)]
 	[-d No. of days of results (default - 15)] 
 	[-n No. of clients (default - 20)]
@@ -38,13 +38,41 @@ usage: remote_monitoring_fault_tolerant_tests.sh
 	[-t interval hours (default - 6)]
 	[-s Initial start date (default - 2023-01-10T00:00:00.000Z)]
 	[-q query db interval in mins, (default - 10)]
+	[-c Experiment type [container|namespace|container_ns|gpucontainer] (default - container)]
+	[-a Test case (default - scale_5k) Valid values - [scale_5k/migration] migration - Used by db_migration test]
+	[-g No. of kruize replicas (default - 10)] 
+    [--api-version] : optional. API version to use - 'v1' for new API (/kruize/api/v1/recommendations), 'legacy' for old APIs (updateRecommendations/listRecommendations). Default is 'legacy'
 ```
 
 For example,
 
 ```
 cd <KRUIZE_REPO>/tests/scripts/remote_monitoring_tests/scale_test
-./remote_monitoring_tests/scale_test/remote_monitoring_scale_test_bulk.sh -i quay.io/kruize/autotune_operator:0.0.20_mvp  -u 250  -d 15  -n 20 -t 6  -q 10  -s 2023-01-10T00:00:00.000Z  -r /tmp/scale_test_results
+./remote_monitoring_scale_test_bulk.sh -i quay.io/kruize/autotune_operator:0.6  -u 250  -d 15  -n 20 -t 6  -q 10  -s 2023-01-10T00:00:00.000Z  -r /tmp/scale_test_results
+
+```
+
+To test namespace experiments (Namespace exps is supported from kruize rel 0.7):
+
+```
+cd <KRUIZE_REPO>/tests/scripts/remote_monitoring_tests/scale_test
+./remote_monitoring_scale_test_bulk.sh -i quay.io/kruize/autotune_operator:0.7  -u 250  -d 15  -n 20 -t 6  -q 10  -s 2023-01-10T00:00:00.000Z  -r /tmp/scale_test_results -c namespace
+
+```
+
+To test with a mix of container & namespace experiments (Namespace exps is supported from kruize rel 0.7):
+
+```
+cd <KRUIZE_REPO>/tests/scripts/remote_monitoring_tests/scale_test
+./remote_monitoring_scale_test_bulk.sh -i quay.io/kruize/autotune_operator:0.7  -u 250  -d 15  -n 20 -t 6  -q 10  -s 2023-01-10T00:00:00.000Z  -r /tmp/scale_test_results -c container_ns
+
+```
+
+To test with the new Recommendations API v1.0 available from 0.11 release
+
+```
+cd <KRUIZE_REPO>/tests/scripts/remote_monitoring_tests/scale_test
+./remote_monitoring_scale_test_bulk.sh -i quay.io/kruize/autotune_operator:0.11  -u 250  -d 15  -n 20 -t 6  -q 10  -s 2023-01-10T00:00:00.000Z  -r /tmp/scale_test_results --api-version=v1
 
 ```
 

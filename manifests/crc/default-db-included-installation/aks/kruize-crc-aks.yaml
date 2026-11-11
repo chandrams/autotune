@@ -41,6 +41,13 @@ spec:
               value: kruizeDB
             - name: PGDATA
               value: /var/lib/postgresql/backup
+          resources:
+            requests:
+              memory: "100Mi"
+              cpu: "0.5"
+            limits:
+              memory: "100Mi"
+              cpu: "0.5"
           ports:
             - containerPort: 5432
           volumeMounts:
@@ -156,7 +163,7 @@ spec:
     spec:
       containers:
         - name: kruize
-          image: quay.io/kruize/autotune_operator:0.5
+          image: quay.io/kruize/autotune_operator:0.12
           imagePullPolicy: Always
           volumeMounts:
             - name: config-volume
@@ -172,6 +179,13 @@ spec:
               value: "/etc/config/kruizeconfigjson"
             - name: JAVA_TOOL_OPTIONS
               value: "-XX:MaxRAMPercentage=80"
+          resources:
+            requests:
+              memory: "768Mi"
+              cpu: "0.7"
+            limits:
+              memory: "768Mi"
+              cpu: "0.7"
           ports:
             - name: kruize-port
               containerPort: 8080
@@ -221,7 +235,7 @@ spec:
         spec:
           containers:
             - name: kruizecronjob
-              image: quay.io/kruize/autotune_operator:0.5
+              image: quay.io/kruize/autotune_operator:0.12
               imagePullPolicy: Always
               volumeMounts:
                 - name: config-volume
@@ -310,29 +324,45 @@ spec:
   selector:
     app: kruize-ui-nginx
 ---
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: kruize-ui-nginx-pod
+  name: kruize-ui-nginx
   namespace: monitoring
-  labels:
-    app: kruize-ui-nginx
 spec:
-  containers:
-    - name: kruize-ui-nginx-container
-      image: quay.io/kruize/kruize-ui:0.0.8
-      imagePullPolicy: Always
-      env:
-        - name: KRUIZE_UI_ENV
-          value: "production"
-      volumeMounts:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: kruize-ui-nginx
+  template:
+    metadata:
+      labels:
+        app: kruize-ui-nginx
+    spec:
+      containers:
+        - name: kruize-ui-nginx-container
+          image: quay.io/kruize/kruize-ui:0.0.9
+          imagePullPolicy: Always
+          env:
+            - name: KRUIZE_UI_ENV
+              value: "production"
+          resources:
+            requests:
+              memory: "10Mi"
+              cpu: "0.002"
+            limits:
+              memory: "10Mi"
+              cpu: "0.002"
+          volumeMounts:
+            - name: nginx-config-volume
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+      volumes:
         - name: nginx-config-volume
-          mountPath: /etc/nginx/nginx.conf
-          subPath: nginx.conf
-  volumes:
-    - name: nginx-config-volume
-      configMap:
-        name: nginx-config
+          configMap:
+            name: nginx-config
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -347,7 +377,7 @@ spec:
         spec:
           containers:
             - name: kruizedeletejob
-              image: quay.io/kruize/autotune_operator:0.5
+              image: quay.io/kruize/autotune_operator:0.12
               imagePullPolicy: Always
               volumeMounts:
                 - name: config-volume

@@ -13,7 +13,7 @@ jobs:
       workflow_url: ${{ steps.workflow_run_info.outputs.url }}
       workflow_id: ${{ steps.workflow_run_info.outputs.id }}
 
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Get workflow run info
         run: |
@@ -27,7 +27,7 @@ jobs:
         run: echo "Comment :${{ github.event.comment.body }}"
 
      
-      - uses: actions/github-script@v6
+      - uses: actions/github-script@v9
         id: get-pr
         with:
           script: |
@@ -45,15 +45,15 @@ jobs:
             }
       
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: refs/pull/${{ github.event.issue.number }}/head
 
       - name: Setup Minikube
-        uses: manusa/actions-setup-minikube@v2.3.0
+        uses: manusa/actions-setup-minikube@v2.18.0
         with:
-          minikube version: 'v1.16.0'
-          kubernetes version: 'v1.19.2'
+          minikube version: 'v1.38.0'
+          kubernetes version: 'v1.34.4'
 
       - name: Build crc
         run: |
@@ -98,12 +98,12 @@ jobs:
            retention-days: 2
 
   reportFailure:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [functest]
     if: failure()
     steps:
     - name: Create comment
-      uses: actions/github-script@v6
+      uses: actions/github-script@v9
       with:
         github-token: ${{secrets.GITHUB_TOKEN}}
         script: |
@@ -119,12 +119,12 @@ jobs:
           })
 
   reportCancelled:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [functest]
     if: cancelled()
     steps:
     - name: Create comment
-      uses: actions/github-script@v6
+      uses: actions/github-script@v9
       with:
         github-token: ${{secrets.GITHUB_TOKEN}}
         script: |
@@ -140,12 +140,12 @@ jobs:
           })
           
   reportSuccess:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [functest]
     if: success()
     steps:
     - name: Create comment
-      uses: actions/github-script@v6
+      uses: actions/github-script@v9
       with:
         github-token: ${{secrets.GITHUB_TOKEN}}
         script: |

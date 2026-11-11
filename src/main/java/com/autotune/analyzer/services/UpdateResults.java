@@ -17,14 +17,15 @@
 package com.autotune.analyzer.services;
 
 import com.autotune.analyzer.adapters.DeviceDetailsAdapter;
+import com.autotune.analyzer.adapters.MetricMetadataAdapter;
 import com.autotune.analyzer.adapters.RecommendationItemAdapter;
 import com.autotune.analyzer.exceptions.KruizeResponse;
 import com.autotune.analyzer.experiment.ExperimentInitiator;
-import com.autotune.analyzer.performanceProfiles.PerformanceProfile;
 import com.autotune.analyzer.serviceObjects.FailedUpdateResultsAPIObject;
 import com.autotune.analyzer.serviceObjects.UpdateResultsAPIObject;
 import com.autotune.analyzer.utils.AnalyzerConstants;
 import com.autotune.analyzer.utils.AnalyzerErrorConstants;
+import com.autotune.common.data.metrics.MetricMetadata;
 import com.autotune.common.data.system.info.device.DeviceDetails;
 import com.autotune.operator.KruizeDeploymentInfo;
 import com.autotune.utils.MetricsConfig;
@@ -45,7 +46,6 @@ import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import static com.autotune.analyzer.utils.AnalyzerConstants.ServiceConstants.CHARACTER_ENCODING;
@@ -58,7 +58,6 @@ import static com.autotune.analyzer.utils.AnalyzerConstants.ServiceConstants.JSO
 public class UpdateResults extends HttpServlet {
     private static final long serialVersionUID = 1L;
     private static final Logger LOGGER = LoggerFactory.getLogger(UpdateResults.class);
-    public static ConcurrentHashMap<String, PerformanceProfile> performanceProfilesMap = new ConcurrentHashMap<>();
     private static int requestCount = 0;
 
     @Override
@@ -83,6 +82,7 @@ public class UpdateResults extends HttpServlet {
                     .registerTypeAdapter(Integer.class, new CustomNumberDeserializer())
                     .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
                     .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
+                    .registerTypeAdapter(MetricMetadata.class, new MetricMetadataAdapter())
                     .create();
             LOGGER.debug("updateResults API request payload for requestID {} is {}", calCount, inputData);
             try {

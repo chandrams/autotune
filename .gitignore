@@ -1,1 +1,13 @@
 __pycache__/
+
+# IntelliJ
+.idea
+*.ipr
+*.iml
+*.iws
+
+# macOS specific files
+.DS_Store
+
+# Maven build directory
+target/

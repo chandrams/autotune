@@ -18,7 +18,7 @@
 #
 
 CURRENT_DIR="$(dirname "$(realpath "$0")")"
-AUTOTUNE_REPO="${CURRENT_DIR}/../.."
+KRUIZE_REPO="${CURRENT_DIR}/.."
 
 # variables to keep track of overall tests performed
 TOTAL_TESTS_FAILED=0
@@ -31,49 +31,48 @@ TESTS_FAILED=0
 TESTS_PASSED=0
 TESTS=0
 
-# By default do not start HPO service as it is started in the autotune docker image
-HPO_SERVICE=0
-
-TEST_MODULE_ARRAY=("da" "em")
-
-TEST_SUITE_ARRAY=("app_autotune_yaml_tests"
-"kruize_layer_yaml_tests"
-"basic_api_tests"
-"modify_kruize_layer_tests"
-"sanity"
-"configmap_yaml_tests"
-"autotune_id_tests"
-"kruize_layer_id_tests"
-"em_standalone_tests"
-"remote_monitoring_tests"
+TEST_SUITE_ARRAY=("remote_monitoring_tests"
 "local_monitoring_tests"
-"authentication_tests")
+"authentication_tests"
+"datasource_tests")
 
-modify_kruize_layer_tests=("add_new_tunable"
-"apply_null_tunable"
-"remove_tunable"
-"change_bound"
-"multiple_tunables")
-
-AUTOTUNE_IMAGE="kruize/autotune_operator:test"
+KRUIZE_DOCKER_IMAGE="quay.io/kruizehub/autotune-test-image:mvp_demo"
 total_time=0
 matched=0
-sanity=0
 setup=1
 skip_setup=0
+skip_benchmark_setup=0
 
 cleanup_prometheus=0
 
-target="autotune"
+target="crc"
 
-# Path to the directory containing yaml files
-MANIFESTS="${AUTOTUNE_REPO}/tests/autotune_test_yamls/manifests"
-api_yaml="api_test_yamls"
-module="da"
-api_yaml_path="${MANIFESTS}/${module}/${api_yaml}"
+#   Clone git Repos
+function clone_repos() {
+	repo_name=$1
+	echo
+	echo "#######################################"
+	echo "Cloning ${repo_name} git repos"
+	if [ ! -d ${repo_name} ]; then
+		git clone git@github.com:kruize/${repo_name}.git >/dev/null 2>/dev/null
+		if [ $? -ne 0 ]; then
+			git clone https://github.com/kruize/${repo_name}.git 2>/dev/null
+		fi
+		check_err "ERROR: git clone of kruize/${repo_name} failed."
+	fi
 
-# Path to the directory containing yaml files
-configmap="${AUTOTUNE_REPO}/manifests/autotune/configmaps"
+	echo "done"
+	echo "#######################################"
+	echo
+}
+
+
+#   Cleanup git Repos
+function delete_repos() {
+	app_name=$1
+	echo "Deleting ${app_name} git repos"
+	rm -rf ${app_name} benchmarks
+}
 
 # checks if the previous command is executed successfully
 # input:Return value of previous command
@@ -131,28 +130,33 @@ function increment_timestamp_by_days() {
 }
 
 function time_diff() {
-	ssec=`date --utc --date "$1" +%s`
-	esec=`date --utc --date "$2" +%s`
+	if date --utc --date "$1" +%s >/dev/null 2>&1; then
+		# GNU date
+		ssec=`date --utc --date "$1" +%s`
+		esec=`date --utc --date "$2" +%s`
+	else
+		# BSD/macOS date (input format: "%Y-%m-%d %H:%M:%S")
+		ssec=`date -j -u -f "%Y-%m-%d %H:%M:%S" "$1" +%s`
+		esec=`date -j -u -f "%Y-%m-%d %H:%M:%S" "$2" +%s`
+	fi
 
 	diffsec=$(($esec-$ssec))
 	echo $diffsec
 }
 
-# Update the config map yaml with specified field
-# input: String to find and string to replace it with
-function update_yaml() {
-	find=$1
-	replace=$2
-	config_yaml=$3
-	sed -i "s/${find}/${replace}/g" ${config_yaml}
+function install_python_requirements() {
+	requirements_file=$1
+	pip_install_log=$2
+
+	echo ""
+	echo "Installing the required python modules..."
+	echo "python3 -m pip install --user -r ${requirements_file} > ${pip_install_log}"
+	python3 -m pip install --user -r "${requirements_file}" > "${pip_install_log}" 2>&1 || err_exit "ERROR: Installing python modules for the test run failed!"
 }
 
-# Set up the autotune
-# input: configmap directory and flag which indicates whether or not to do the deployment status check. It has to be set to "1" in case of configmap yaml test
+# Set up autotune
 function setup() {
-	AUTOTUNE_POD_LOG=$1
-	CONFIGMAP_DIR=$2
-	ignore_deployment_status_check=$3
+	KRUIZE_POD_LOG=$1
 
 	# remove the existing autotune objects
 	autotune_cleanup ${TEST_SUITE_DIR}
@@ -165,7 +169,8 @@ function setup() {
 
 	# Deploy autotune
 	echo "Deploying autotune..."
-	deploy_autotune  "${cluster_type}" "${AUTOTUNE_DOCKER_IMAGE}" "${CONFIGMAP_DIR}" "${AUTOTUNE_POD_LOG}"
+
+	deploy_autotune  "${cluster_type}" "${KRUIZE_DOCKER_IMAGE}" "${KRUIZE_POD_LOG}"
 	echo "Deploying autotune...Done"
 
 	case "${cluster_type}" in
@@ -192,53 +197,25 @@ function setup_prometheus() {
 # output: Deploy autotune based on the parameter passed
 function deploy_autotune() {
 	cluster_type=$1
-	AUTOTUNE_IMAGE=$2
-	CONFIGMAP_DIR=$3
-	AUTOTUNE_POD_LOG=$4
-
-	pushd ${AUTOTUNE_REPO} > /dev/null
+	KRUIZE_IMAGE=$2
+	KRUIZE_POD_LOG=$3
 
 	# Check if the cluster_type is minikube., if so deploy prometheus
 	if [ "${cluster_type}" == "minikube" ]; then
 		echo "Installing Prometheus on minikube" >>/dev/stderr
-		setup_prometheus >> ${AUTOTUNE_SETUP_LOG} 2>&1
+		setup_prometheus >> ${KRUIZE_SETUP_LOG} 2>&1
 	fi
 
-	echo "Deploying autotune $target"
-	# if both autotune image and configmap is not passed then consider the test-configmap(which has logging level as debug)
-	if [[ -z "${AUTOTUNE_IMAGE}" && -z "${CONFIGMAP_DIR}" ]]; then
-		if [ ${target} == "autotune" ]; then
-			cmd="./deploy.sh -c ${cluster_type} -d ${CONFIGMAP} -m ${target}"
-		elif [ ${target} == "crc" ]; then
-			cmd="./deploy.sh -c ${cluster_type} -m ${target} -b"
-		fi
-	# if both autotune image and configmap  is passed
-	elif [[ ! -z "${AUTOTUNE_IMAGE}" && ! -z "${CONFIGMAP_DIR}" ]]; then
-		if [ ${target} == "autotune" ]; then
-			cmd="./deploy.sh -c ${cluster_type} -i ${AUTOTUNE_IMAGE} -d ${CONFIGMAP_DIR} -m ${target}"
-		elif [ ${target} == "crc" ]; then
-			cmd="./deploy.sh -c ${cluster_type} -i ${AUTOTUNE_IMAGE} -m ${target}"
-		fi
-
-	# autotune image is passed but configmap is not passed then consider the test-configmap(which has logging level as debug)
-	elif [[ ! -z "${AUTOTUNE_IMAGE}" && -z "${CONFIGMAP_DIR}" ]]; then
-		if [ ${target} == "autotune" ]; then
-			cmd="./deploy.sh -c ${cluster_type} -i ${AUTOTUNE_IMAGE} -d ${CONFIGMAP} -m ${target}"
-		elif [ ${target} == "crc" ]; then
-			cmd="./deploy.sh -c ${cluster_type} -i ${AUTOTUNE_IMAGE} -m ${target}"
-		fi
-
-	fi
+	echo "Deploying autotune"
+	cmd="./deploy.sh -c ${cluster_type} -i ${KRUIZE_IMAGE} -m ${target}"
 	echo "Kruize deploy command - ${cmd}"
 	${cmd}
 
 	status="$?"
 	# Check if autotune is deployed.
-	# Ignore the status check if ignore_deployment_status_check is set to "1".
-	# In case of configmap yaml tests we need not check if autotune has deployed properly during the setup since it is done as part of the test.
-	if [[ "${status}" -eq "1" && "${ignore_deployment_status_check}" != "1" ]]; then
+	if [[ "${status}" -eq "1" ]]; then
 		echo "Error deploying autotune" >>/dev/stderr
-		echo "See ${AUTOTUNE_SETUP_LOG}" >>/dev/stderr
+		echo "See ${KRUIZE_SETUP_LOG}" >>/dev/stderr
 		exit -1
 	fi
 
@@ -246,28 +223,18 @@ function deploy_autotune() {
 
 	if [[ ${cluster_type} == "minikube" || ${cluster_type} == "openshift" ]]; then
 		sleep 2
-		echo "Capturing Autotune service log into ${AUTOTUNE_POD_LOG}"
+		echo "Capturing Autotune service log into ${KRUIZE_POD_LOG}"
 		namespace="openshift-tuning"
 		if [ ${cluster_type} == "minikube" ]; then
 			namespace="monitoring"
 		fi
 		echo "Namespace = $namespace"
-		if [ ${target} == "crc" ]; then
-			service="kruize"
-			autotune_pod=$(kubectl get pod -n ${namespace} | grep ${service} | grep -v kruize-ui | grep -v kruize-db | cut -d " " -f1)
-			echo "autotune_pod = $autotune_pod"
-			echo "kubectl -n ${namespace} logs -f ${autotune_pod} > "${AUTOTUNE_POD_LOG}" 2>&1 &"
-			kubectl -n ${namespace} logs -f ${autotune_pod} > "${AUTOTUNE_POD_LOG}" 2>&1 &
-		else
-			service="autotune"
-			autotune_pod=$(kubectl get pod -n ${namespace} | grep ${service} | cut -d " " -f1)
-			echo "autotune_pod = $autotune_pod"
-			echo "kubectl -n ${namespace} logs -f ${autotune_pod} -c autotune > "${AUTOTUNE_POD_LOG}" 2>&1 &"
-			kubectl -n ${namespace} logs -f ${autotune_pod} -c autotune > "${AUTOTUNE_POD_LOG}" 2>&1 &
-		fi
+		service="kruize"
+		kruize_pod=$(kubectl get pod -n ${namespace} | grep ${service} | grep -v kruize-ui | grep -v kruize-db | cut -d " " -f1)
+		echo "kruize_pod = $kruize_pod"
+		echo "kubectl -n ${namespace} logs -f ${kruize_pod} > "${KRUIZE_POD_LOG}" 2>&1 &"
+		kubectl -n ${namespace} logs -f ${kruize_pod} > "${KRUIZE_POD_LOG}" 2>&1 &
 	fi
-
-	popd > /dev/null
 }
 
 # Remove the prometheus setup
@@ -287,17 +254,41 @@ function autotune_cleanup() {
 
 	# If autotune cleanup is invoke through -t option then setup.log will inside the given result directory
 	if [ ! -z "${RESULTS_LOG}" ]; then
-		AUTOTUNE_SETUP_LOG="${RESULTS_LOG}/autotune_setup.log"
-		pushd ${AUTOTUNE_REPO} > /dev/null
+		KRUIZE_SETUP_LOG="${RESULTS_LOG}/kruize_setup.log"
+		pushd ${KRUIZE_REPO} > /dev/null
 	else
-		AUTOTUNE_SETUP_LOG="autotune_setup.log"
-		pushd ${AUTOTUNE_REPO}/autotune > /dev/null
+		KRUIZE_SETUP_LOG="kruize_setup.log"
+		if [ "${USE_OPERATOR}" == "1" ]; then
+		  OPERATOR_REPO_DIR="${KRUIZE_REPO}/kruize-operator"
+		  pushd "${OPERATOR_REPO_DIR}" > /dev/null
+		else
+		  pushd ${KRUIZE_REPO}/autotune > /dev/null
+		fi
 	fi
 
 	echo  "Removing Autotune dependencies..."
-	cmd="./deploy.sh -c ${cluster_type} -m ${target} -t"
-	echo "CMD = ${cmd}"
-	${cmd} >> ${AUTOTUNE_SETUP_LOG} 2>&1
+	
+	# Check if operator deployment was used
+	if [ "${USE_OPERATOR}" == "1" ]; then
+		echo "Cleaning up operator deployment..."
+		OPERATOR_REPO_DIR="${KRUIZE_REPO}/kruize-operator"
+		if [ -d "${OPERATOR_REPO_DIR}" ]; then
+			echo "Running: make undeploy"
+			echo "make undeploy-${cluster_type}"
+			make undeploy-${cluster_type} >> ${KRUIZE_SETUP_LOG} 2>&1
+			if [ $? -ne 0 ]; then
+				echo "Warning: make undeploy failed, check ${KRUIZE_SETUP_LOG}"
+			fi
+		else
+			echo "Warning: kruize-operator directory not found, skipping operator cleanup"
+		fi
+	else
+		# Standard cleanup using deploy scripts
+		cmd="./deploy.sh -c ${cluster_type} -m ${target} -t"
+		echo "CMD = ${cmd}"
+		${cmd} >> ${KRUIZE_SETUP_LOG} 2>&1
+	fi
+	
 	# Remove the prometheus setup
 	if [ "${cleanup_prometheus}" -eq "1" ]; then
 		prometheus_cleanup
@@ -316,11 +307,11 @@ function restore_db() {
 	kruize_db_pod=$(kubectl get pods -o=name -n ${NAMESPACE} | grep kruize-db | cut -d '/' -f2)
 	db_file=$(basename ${db_backup_file})
 
-	echo "oc cp ${db_backup_file} ${NAMESPACE}/${kruize_db_pod}:/"
-	oc cp ${db_backup_file} ${NAMESPACE}/${kruize_db_pod}:/
+	echo "kubectl cp ${db_backup_file} ${NAMESPACE}/${kruize_db_pod}:/"
+	kubectl cp ${db_backup_file} ${NAMESPACE}/${kruize_db_pod}:/
 
-	echo "kubectl exec -it ${kruize_db_pod} -n ${NAMESPACE} -- psql -U admin -d kruizeDB -f ${db_file} > ${db_restore_log}"
-	kubectl exec -it ${kruize_db_pod} -n ${NAMESPACE} -- psql -U admin -d kruizeDB -f ${db_file} > ${db_restore_log}
+	echo "kubectl exec -it ${kruize_db_pod} -n ${NAMESPACE} -- pg_restore -U admin -d kruizeDB ${db_file} > ${db_restore_log}"
+	kubectl exec -it ${kruize_db_pod} -n ${NAMESPACE} -- pg_restore -U admin -d kruizeDB ${db_file} > ${db_restore_log}
 	echo "Restoring DB...done"
 	echo ""
 }
@@ -458,9 +449,9 @@ function app_cleanup() {
 	echo
 	echo -n "Removing ${app_name} app..."
 	if [ ${app_name} == "tfb-qrh" ]; then
-		${APP_REPO}/${APP_FOLDER}/scripts/tfb-cleanup.sh -c ${cluster_type} >> ${AUTOTUNE_SETUP_LOG} 2>&1
+		${APP_REPO}/${APP_FOLDER}/scripts/tfb-cleanup.sh -c ${cluster_type} >> ${KRUIZE_SETUP_LOG} 2>&1
 	else
-		${APP_REPO}/${APP_FOLDER}/scripts/${app_name}-cleanup.sh -c ${cluster_type} >> ${AUTOTUNE_SETUP_LOG} 2>&1
+		${APP_REPO}/${APP_FOLDER}/scripts/${app_name}-cleanup.sh -c ${cluster_type} >> ${KRUIZE_SETUP_LOG} 2>&1
 	fi
 	echo "done"
 }
@@ -485,15 +476,15 @@ function deploy_app() {
 	# Invoke the deploy script from app benchmark
 	if [ ${cluster_type} == "openshift" ]; then
 		if [ ${app_name} == "tfb-qrh" ]; then
-			${APP_REPO}/${APP_FOLDER}/scripts/tfb-deploy.sh --clustertype=${cluster_type} -s ${kurl} -i ${num_instances}  >> ${AUTOTUNE_SETUP_LOG} 2>&1
+			${APP_REPO}/${APP_FOLDER}/scripts/tfb-deploy.sh --clustertype=${cluster_type} -s ${kurl} -i ${num_instances}  >> ${KRUIZE_SETUP_LOG} 2>&1
                 else
-			${APP_REPO}/${APP_FOLDER}/scripts/${app_name}-deploy-openshift.sh -s ${kurl} -i ${num_instances}  >> ${AUTOTUNE_SETUP_LOG} 2>&1
+			${APP_REPO}/${APP_FOLDER}/scripts/${app_name}-deploy-openshift.sh -s ${kurl} -i ${num_instances}  >> ${KRUIZE_SETUP_LOG} 2>&1
 		fi
 	else
 		if [ ${app_name} == "tfb-qrh" ]; then
-			${APP_REPO}/${APP_FOLDER}/scripts/tfb-deploy.sh --clustertype=${cluster_type} -s "localhost" -i ${num_instances}  >> ${AUTOTUNE_SETUP_LOG} 2>&1
+			${APP_REPO}/${APP_FOLDER}/scripts/tfb-deploy.sh --clustertype=${cluster_type} -s "localhost" -i ${num_instances}  >> ${KRUIZE_SETUP_LOG} 2>&1
 		else
-			${APP_REPO}/${APP_FOLDER}/scripts/${app_name}-deploy-${cluster_type}.sh -i ${num_instances}  >> ${AUTOTUNE_SETUP_LOG} 2>&1
+			${APP_REPO}/${APP_FOLDER}/scripts/${app_name}-deploy-${cluster_type}.sh -i ${num_instances}  >> ${KRUIZE_SETUP_LOG} 2>&1
 		fi
 	fi
 	echo "done"
@@ -534,213 +525,75 @@ function error_message() {
 	fi
 }
 
-# Check if the expected message is matching with the actual message
-# output: Check if the expected message is present in the log . If so set failed value to 0 else set failed value to 1 and call the error_message function
-function validate_yaml () {
-	if [ "${autotune_object}" == "true" ]; then
-		if [ ! -z "${status}" ]; then
-			echo "${object} object ${testcase} got created" | tee -a ${LOG}
-			if  grep -q "${expected_log_msg}" "${AUTOTUNE_LOG}" ; then
-				failed=0
-				error_message "${failed}"
-			else
-				failed=1
-				error_message "${failed}"
-			fi
-		else
-			echo "${object} object ${testcase} did not get created" | tee -a ${LOG}
-			failed=1
-			error_message "${failed}"
-		fi
-	else
-		if [ ! -z "${status}" ]; then
-			echo "${object} object ${testcase} got created" | tee -a ${LOG}
-			failed=1
-			error_message "${failed}"
-		else
-			echo "${object} object ${testcase} did not get created" | tee -a ${LOG}
-			if grep -q "${expected_log_msg}" "${LOG_DIR}/kubectl.log" ; then
-				failed=0
-				error_message "${failed}"
-			else
-				failed=1
-				error_message "${failed}"
-			fi
-		fi
-	fi
-}
-
-# run the specified testcase
-# input: object(autotune/autotuneconfig), testcase and yaml
-# output: run the testcase and display the summary of the testcase
-function run_test_case() {
-	LOG="${LOG_DIR}/${testcase}.log"
-	AUTOTUNE_POD_LOG="${TEST_SUITE_DIR}/autotune.log"
-	AUTOTUNE_LOG="${LOG_DIR}/${testcase}-autotune.log"
-	((TOTAL_TESTS++))
-	((TESTS++))
-	object=$1
-	testcase=$2
-	yaml=$3
-
-	# Run the test
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">> ${LOG}
-	echo "                    Running Testcase ${test}">> ${LOG}
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">> ${LOG}
-	echo "*******----------- Running test for ${testcase} ----------*******"| tee -a ${LOG}
-
-	# Apply the yaml file
-	if [ "${object}" == "autotuneconfig" ]; then
-		kubectl_cmd="kubectl apply -f ${yaml}.yaml -n ${NAMESPACE}"
-	else
-		kubectl_cmd="kubectl apply -f ${yaml}.yaml"
-	fi
-
-	echo "CMD=${kubectl_cmd}">>${LOG}
-
-	# Expose prometheus as nodeport and get the url
-	expose_prometheus
-
-	# Replace PROMETHEUS_URL keyword by actual URL
-	sed -i "s|PROMETHEUS_URL|${prometheus_url}|g" ${yaml}.yaml
-
-	# Get autotune pod log
-	get_autotune_pod_log ${AUTOTUNE_POD_LOG}
-
-	# Get the length of the pod log before applying the yaml
-	log_length_before_test=$(cat ${AUTOTUNE_POD_LOG} | wc -l)
-
-	# Apply the yaml
-	kubectl_log_msg=$(${kubectl_cmd} 2>&1)
-	check_err "Error: Issue in deploying ${object} object"
-	echo "${kubectl_log_msg}" > ${LOG_DIR}/kubectl.log
-	echo "${kubectl_log_msg}" >> "${LOG}"
-
-	sed -i "s|${prometheus_url}|PROMETHEUS_URL|g" ${yaml}.yaml
-
-	# Wait for 0.2 seconds to get the complete autotune pod log
-	sleep 0.2
-
-	# Get autotune pod log
-	get_autotune_pod_log ${AUTOTUNE_POD_LOG}
-
-	# Extract the lines from the pod log after log_length_before_test
-	extract_lines=`expr ${log_length_before_test} + 1`
-	cat ${AUTOTUNE_POD_LOG} | tail -n +${extract_lines} > ${AUTOTUNE_LOG}
-
-	echo ""
-	echo "log_length_before_test ${log_length_before_test}"
-	echo "extract_lines ${extract_lines}"
-	echo ""
-
-	# check if autotune/autotuneconfig object has got created
-	if [ "${object}" == "autotuneconfig" ]; then
-		status=$(kubectl get ${object} -n ${NAMESPACE} | grep "${testcase}" | cut -d " " -f1)
-	else
-		status=$(kubectl get ${object} | grep "${testcase}" | cut -d " " -f1)
-	fi
-
-	# check if the expected message is matching with the actual message
-	validate_yaml
-
-#	rm kubectl.log
-	echo ""
-	echo "--------------------------------------------------------------------------------"| tee -a ${LOG}
-}
-
-# Perform app_autotune/autotuneconfig yaml tests
-# input: testcase, testobject(autotune/autotuneconfig), path to yaml directory
-# output: Perform the tests for given test case
-function run_test() {
-	testtorun=$1
-	object=$2
-	path=$3
-
-	for test in ${testtorun[@]}
-	do
-		LOG_DIR="${TEST_SUITE_DIR}/${test}"
-		mkdir ${LOG_DIR}
-		echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-		echo "                    Running Testcases for ${test}"
-		echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-		typeset -n var="${test}_testcases"
-
-		# check if is the sanity test , if so then perform only the sanity bucket list
-		test_var=()
-		if [ "${sanity}" -eq "1" ]; then
-			for testcase in ${var[@]}
-			do
-				if [[ "${testcase}" == invalid* || "${testcase}" == valid* || "${testcase}" == blank* ]]; then
-					test_var+=(${testcase})
-				fi
-			done
-		else
-			test_var+=(${var[@]})
-		fi
-
-		for testcase in ${test_var[@]}
-		do
-			yaml=${path}/${test}/${testcase}
-			typeset -n autotune_object="${test}_autotune_objects[${testcase}]"
-			typeset -n expected_log_msg="${test}_expected_log_msgs[${testcase}]"
-			run_test_case "${object}" "${testcase}" "${yaml}"
-			echo
-		done
-		echo ""
-	done
-	other_tests="${object}_other"
-	# perform other test cases
-	LOG_DIR="${TEST_SUITE_DIR}/${other_tests}"
-	mkdir ${LOG_DIR}
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-	echo "                    Running Testcases for ${other_tests}"
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-	typeset -n var="${other_tests}_testcases"
-	for testcase in ${var[@]}
-	do
-		yaml=${path}/${other_tests}/${testcase}
-		typeset -n autotune_object="${other_tests}_autotune_objects[${testcase}]"
-		typeset -n expected_log_msg="${other_tests}_expected_log_msgs[${testcase}]"
-		run_test_case "${object}" "${testcase}" "${yaml}"
-		echo
-	done
-	echo ""
-
-	# Delete the prometheus service
-	kubectl delete svc prometheus-test -n ${NAMESPACE}
-}
-
 # Form the curl command based on the cluster type
 function form_curl_cmd() {
+	crud_operation=$1
 	# Form the curl command based on the cluster type
-	service="autotune"
-	if [ ${target} == "crc" ]; then
-		service="kruize"
-	fi
-	case $cluster_type in
-	   openshift)
-		NAMESPACE="openshift-tuning"
-		oc expose svc/${service} -n ${NAMESPACE}
+	service="kruize"
+	case "${cluster_type}" in
+		openshift)
+			NAMESPACE="openshift-tuning"
+			oc expose svc/"${service}" -n "${NAMESPACE}"
 
-		SERVER_IP=($(oc status --namespace=${NAMESPACE} | grep ${service} | grep port | cut -d " " -f1 | cut -d "/" -f3))
-	        echo "IP = $SERVER_IP"
+			SERVER_IP=$(oc status --namespace="${NAMESPACE}" \
+				| grep "${service}" \
+				| grep port \
+				| cut -d " " -f1 \
+				| cut -d "/" -f3)
 
-		AUTOTUNE_URL="http://${SERVER_IP}"
+			echo "IP = ${SERVER_IP}"
+			AUTOTUNE_URL="http://${SERVER_IP}"
 		;;
-	   minikube)
-		NAMESPACE="monitoring"
 
-		echo "service = $service namespace = $NAMESPACE"
-		AUTOTUNE_PORT=$(kubectl -n ${NAMESPACE} get svc ${service} --no-headers -o=custom-columns=PORT:.spec.ports[*].nodePort)
-		SERVER_IP=$(minikube ip)
-		echo "SERVER_IP = $SERVER_IP AUTOTUNE_PORT = $AUTOTUNE_PORT"
-		AUTOTUNE_URL="http://${SERVER_IP}:${AUTOTUNE_PORT}"
+		minikube)
+			NAMESPACE="monitoring"
+
+			echo "service = ${service} namespace = ${NAMESPACE}"
+			AUTOTUNE_PORT=$(kubectl -n "${NAMESPACE}" get svc "${service}" \
+				--no-headers -o=custom-columns=PORT:.spec.ports[*].nodePort)
+
+			SERVER_IP=$(minikube ip)
+			echo "SERVER_IP = ${SERVER_IP} AUTOTUNE_PORT = ${AUTOTUNE_PORT}"
+			AUTOTUNE_URL="http://${SERVER_IP}:${AUTOTUNE_PORT}"
 		;;
-	   docker) ;;
-	   *);;
+
+		kind)
+			NAMESPACE="monitoring"
+			KIND_NODE_NAME="kind-control-plane"
+
+			echo "service = ${service} namespace = ${NAMESPACE}"
+			AUTOTUNE_PORT=$(kubectl get svc "${service}" -n "${NAMESPACE}" \
+				-o jsonpath='{.spec.ports[0].nodePort}')
+
+			if [ -z "${AUTOTUNE_PORT}" ]; then
+				echo "ERROR: Failed to get NodePort for service ${service}"
+				exit 1
+			fi
+
+			# Get KIND node IP (Docker network IP)
+			SERVER_IP=$(docker inspect "${KIND_NODE_NAME}" \
+				--format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+
+			if [ -z "${SERVER_IP}" ]; then
+				echo "ERROR: Failed to get IP for KIND node ${KIND_NODE_NAME}"
+				exit 1
+			fi
+
+			echo "SERVER_IP = ${SERVER_IP} AUTOTUNE_PORT = ${AUTOTUNE_PORT}"
+			AUTOTUNE_URL="http://${SERVER_IP}:${AUTOTUNE_PORT}"
+		;;
+
+		docker)
+		;;
+
+		*)
+		;;
 	esac
 
 	curl_cmd="curl -s -H 'Accept: application/json' ${AUTOTUNE_URL}"
+	if [ "${crud_operation}" == "update" ]; then
+		curl_cmd="curl -s -X PUT -H 'Accept: application/json' ${AUTOTUNE_URL}"
+	fi
 	echo "curl_cmd = ${curl_cmd}"
 }
 
@@ -779,100 +632,6 @@ function format_memory() {
 	echo "$bound"
 }
 
-# Create the expected search space json
-# Input: experiment name
-function create_expected_searchspace_json() {
-	app_name=$1
-	exp_name=$2
-
-	file_name="${LOG_DIR}/expected_searchspace.json"
-
-	# check if the experiment name is passed, if not the consider all the experiments
-	if [ -z "${exp_name}" ]; then
-		exp_names=(${autotune_names[@]})
-	else
-		exp_names=(${exp_name})
-	fi
-
-	echo "exp name = ${exp_names[@]}"
-
-	arr_size=${#exp_names[@]}
-
-	printf '[' > ${file_name}
-	for index in ${!exp_names[@]}
-	do
-		autotune_json="${AUTOTUNE_JSONS_DIR}/${exp_names[index]}.json"
-		printf '\n  {\n  "experiment_name": "'${exp_names[index]}'",' >> ${file_name}
-		printf '\n  "objective_function": '$(cat ${autotune_json} | jq '.spec.slo.objective_function')',' >> ${file_name}
-		printf '\n  "experiment_id": '$(cat ${json_file} | jq 'sort_by(.experiment_name)' | jq '.['${index}'].experiment_id')',' >> ${file_name}
-		hpo_algo_impl=$(cat ${autotune_json} | jq '.spec.slo.hpo_algo_impl')
-
-		if [ ${hpo_algo_impl} == null ]; then
-			hpo_algo_impl="optuna_tpe"
-		fi
-
-		printf '\n  "hpo_algo_impl":  "'${hpo_algo_impl}'",' >> ${file_name}
-
-		# Pick the expected layers based on the application
-		read -r -a layer_names<<<"${layer_configs[$app_name]}"
-
-		layer_names=(${layer_names[@]})
-
-		layercount=${#layer_names[@]}
-
-		for layer in "${layer_names[@]}"
-		do
-
-			layer_json="${KRUIZE_LAYER_JSONS_DIR}/${layer}.json"
-
-			((layercount--))
-			printf '\n  "tunables": [' >> ${file_name}
-			length=$(cat ${layer_json} | jq .tunables | jq length) >> ${file_name}
-			while [ "${length}" -ne 0 ]
-			do
-				((length--))
-				printf '\n {\n\t\t"value_type": '$(cat ${layer_json} | jq .tunables[${length}].value_type)',' >> ${file_name}
-				printf '\n\t\t"name": '$(cat ${layer_json} | jq .tunables[${length}].name)',' >> ${file_name}
-
-				name=$(cat ${layer_json} | jq .tunables[${length}].name)
-				lower_bound=$(cat ${layer_json} | jq .tunables[${length}].lower_bound)
-
-				if [[ "${layer}" == "container"  &&  "${name}" == "\"memoryRequest\"" ]]; then
-					lower_bound=$(format_memory "${lower_bound}")
-				fi
-
-				printf '\n\t\t"lower_bound": '${lower_bound}',' >> ${file_name}
-
-				printf '\n\t\t"step": '$(cat ${layer_json} | jq .tunables[${length}].step)',' >> ${file_name}
-
-
-				upper_bound=$(cat ${layer_json} | jq .tunables[${length}].upper_bound)
-				if [[ "${layer}" == "container" && "${name}" == "\"memoryRequest\"" ]]; then
-					upper_bound=$(format_memory "${upper_bound}")
-				fi
-
-				printf '\n\t\t"upper_bound": '${upper_bound}'' >> ${file_name}
-
-				if [ "${length}" -ne 0 ]; then
-					printf '\n\t }, \n' >> ${file_name}
-				else
-					printf '\n\t }], \n' >> ${file_name}
-				fi
-			done
-		done
-		printf '\n  "direction": '$(cat ${autotune_json} | jq '.spec.slo.direction')'' >> ${file_name}
-		if [ "${index}" -eq $((arr_size-1)) ]; then
-			printf '\n } \n' >> ${file_name}
-		else
-			printf '\n }, \n' >> ${file_name}
-		fi
-	done
-	printf ']' >> ${file_name}
-	echo "expected json"  >> ${LOG}
-	cat ${file_name}  >> ${LOG}
-	echo "" >> ${LOG}
-}
-
 # Run the curl command passed and capture the json output in a file
 # Input: curl command, json file name
 function run_curl_cmd() {
@@ -886,706 +645,6 @@ function run_curl_cmd() {
 	cat ${json_file} >> ${LOG}
 	echo "" >> ${LOG}
 }
-
-# Get the actual search space json
-# Input: experiment name
-function get_searchspace_json() {
-	exp_name=$1
-	if [ -z "${exp_name}" ]; then
-		cmd="${curl_cmd}/searchSpace"
-	else
-		cmd="${curl_cmd}/searchSpace?experiment_name=${exp_name}"
-	fi
-
-	json_file="${LOG_DIR}/actual_searchspace.json"
-	run_curl_cmd "${cmd}" "${json_file}"
-}
-
-# Tests the searchSpace Autotune API
-# Input: application name, experiment name
-function searchspace_test() {
-	app_name=$1
-	exp_name=$2
-	test_name=$FUNCNAME
-
-	if [ ! -z "${exp_name}" ]; then
-		test_name="searchspace_exp_name_test"
-	fi
-	LOG_DIR="${TEST_SUITE_DIR}/${test_name}"
-
-	# check if the directory exists
-	if [ ! -d ${LOG_DIR} ]; then
-		mkdir ${LOG_DIR}
-	fi
-
-	LOG="${LOG_DIR}/${test_name}.log"
-	AUTOTUNE_LOG="${LOG_DIR}/${test_name}_autotune.log"
-
-	# get autotune pod log
-	get_autotune_pod_log "${AUTOTUNE_LOG}"
-
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" | tee  -a ${LOG}
-	echo "                    Running Testcase ${test_name}" | tee  -a ${LOG}
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" | tee -a ${LOG}
-
-	if [ -z "${exp_name}" ]; then
-		get_searchspace_json
-		create_expected_searchspace_json "${app_name}"
-	else
-		get_searchspace_json "${exp_name}"
-		create_expected_searchspace_json "${app_name}" "${exp_name}"
-	fi
-	compare_json "${LOG_DIR}/actual_searchspace.json" "${LOG_DIR}/expected_searchspace.json" "${test_name}"
-	echo "--------------------------------------------------------------" | tee -a ${LOG}
-}
-
-# Create the expected listStackTunables json
-# Input: application name, experiment name, layer name
-function create_expected_liststacktunables_json() {
-	app_name=$1
-	exp_name=$2
-	layer_name=$3
-	file_name="${LOG_DIR}/expected_liststacktunables.json"
-
-	# check if the experiment name is passed, if not the consider all the experiments
-	if [ -z "${exp_name}" ]; then
-		exp_names=(${autotune_names[@]})
-	else
-		exp_names=(${exp_name})
-	fi
-
-	arr_size=${#exp_names[@]}
-
-	echo "app name = $app_name"
-	echo "exp name = ${exp_names[@]}"
-
-	printf '[' > ${file_name}
-	for index in ${!exp_names[@]}
-	do
-		autotune_json="${AUTOTUNE_JSONS_DIR}/${exp_names[index]}.json"
-		printf '{\n    "experiment_name": "'${exp_names[index]}'",' >> ${file_name}
-		printf '\n    "objective_function": '$(cat ${autotune_json} | jq '.spec.slo.objective_function')',' >> ${file_name}
-
-
-		hpo_algo_impl=$(cat ${autotune_json} | jq '.spec.slo.hpo_algo_impl')
-
-		if [ ${hpo_algo_impl} == null ]; then
-			hpo_algo_impl="optuna_tpe"
-		fi
-
-		printf '\n    "hpo_algo_impl":  "'${hpo_algo_impl}'",' >> ${file_name}
-
-		printf '\n    "deployment_name": "'${deployment_names[index]}'",' >> ${file_name}
-		printf '\n    "namespace":  '$(cat ${autotune_json} | jq '.metadata.namespace')',' >> ${file_name}
-		printf '\n    "function_variables": [' >> ${file_name}
-		variables_count=$(cat ${autotune_json} | jq '.spec.slo.function_variables' | jq length)
-
-		for ((i=0 ; i<variables_count ; i++))
-		do
-			printf '\n     {'  >> ${file_name}
-			printf '\n         "value_type": '$(cat ${autotune_json} | jq '.spec.slo.function_variables['${i}'].value_type')','  >> ${file_name}
-			printf '\n 	   "name": '$(cat ${autotune_json} | jq '.spec.slo.function_variables['${i}'].name')','  >> ${file_name}
-
-			url=$(kubectl get svc -n ${NAMESPACE} | grep prometheus-k8s | awk {'print $3'})
-			fn_query=$(cat ${autotune_json} | jq '.spec.slo.function_variables['${i}'].query')
-
-			fn_query=$(echo "${fn_query}" | sed 's/^"\|"$//g')
-			echo -e "\n          \"query_url\": \"${fn_query}\""  >> ${file_name}
-
-			var_count=$((variables_count-1))
-			if [[ ${i} == ${var_count} ]]; then
-				printf '\n    }'  >> ${file_name}
-			else
-				printf '\n    },'  >> ${file_name}
-			fi
-		done
-		printf '\n ],'  >> ${file_name}
-
-
-		if [ -z "${layer_name}" ]; then
-			# Pick the expected layers based on the application
-			read -r -a layer_names <<< "${layer_configs[$app_name]}"
-		else
-			read -r -a layer_names <<<  "${layer_name}"
-		fi
-
-		layer_names=(${layer_names[@]})
-
-		layercount=${#layer_names[@]}
-
-		images_count=${#container_images[@]}
-		printf '\n    "stacks": [{' >> ${file_name}
-		for i in ${!container_images[@]}
-		do
-
-			printf '\n  "layers": [' >> 	${file_name}
-			for layer in "${layer_names[@]}"
-			do
-				layer_json="${KRUIZE_LAYER_JSONS_DIR}/${layer}.json"
-				((layercount--))
-				printf '{\n         "layer_level": '$(cat ${layer_json} | jq .layer_level)','  >> ${file_name}
-				layer_level=$(cat ${layer_json} | jq .layer_level)
-
-				# Expected tunables
-				printf '\n         "tunables": [' >> ${file_name}
-				tunables_length=$(cat ${layer_json} | jq .tunables | jq length) >> ${file_name}
-				while [ ${tunables_length} -ne 0 ]
-				do
-					((tunables_length--))
-					printf '{\n\t\t"value_type": '$(cat ${layer_json} | jq .tunables[${tunables_length}].value_type)',' >> ${file_name}
-					name=$(cat ${layer_json} | jq .tunables[${tunables_length}].name)
-					printf '\n\t\t"name": '${name}',\n' >> ${file_name}
-
-					lower_bound=$(cat ${layer_json} | jq .tunables[${tunables_length}].lower_bound)
-
-					if [[ "${name}" == "\"memoryLimit\""  ||  "${name}" == "\"memoryRequest\"" ]]; then
-						lower_bound=$(format_memory "${lower_bound}")
-					fi
-					printf '\t\t"lower_bound": '${lower_bound}',' >> ${file_name}
-
-					printf '\n\t\t"step": '$(cat ${layer_json} | jq .tunables[${tunables_length}].step)',\n' >> ${file_name}
-					query=$(cat ${layer_json} |jq .tunables[${tunables_length}].queries.datasource[].query)
-					query=$(echo ${query} | sed 's/","/,/g; s/^"\|"$//g')
-					query=$(echo "${query/\$CONTAINER_LABEL$/container}")
-					query=$(echo "${query/\$POD_LABEL$/pod}")
-					query=$(echo "${query/\$POD$/${app}}")
-					echo '                "query_url": "'${query}'",'  >> ${file_name}
-
-					upper_bound=$(cat ${layer_json} | jq .tunables[${tunables_length}].upper_bound)
-					if [[ "${name}" == "\"memoryLimit\"" || "${name}" == "\"memoryRequest\"" ]]; then
-						upper_bound=$(format_memory "${upper_bound}")
-					fi
-					printf '\t\t"upper_bound": '${upper_bound}'' >> ${file_name}
-					if [ "${tunables_length}" -ne 0 ]; then
-						printf '\n       }, \n' >> ${file_name}
-					else
-						printf '\n       }], \n' >> ${file_name}
-					fi
-				done
-				printf '\n         "layer_id": '$(cat ${json_file} | jq 'sort_by(.experiment_name)' | jq '.['${index}'].stacks['${i}'].layers['${layer_level}'].layer_id')',' >> ${file_name}
-				printf '\n         "layer_name": '$(cat ${layer_json} | jq .layer_name)','  >> ${file_name}
-				printf '\n' >> ${file_name}
-				echo '         "layer_details": '$(cat ${layer_json} | jq .details)''  >> ${file_name}
-				if [ "${layercount}" -eq 0 ]; then
-					printf '} \n  ],' >> ${file_name}
-				else
-					printf '}, \n' >> ${file_name}
-				fi
-			done
-			printf '\n     "stack_name": "'${container_images[i]}'"' >> ${file_name}
-			if [ "${i}" -lt $((images_count-1)) ]; then
-				printf '     },' >> ${file_name}
-			fi
-		done
-		printf '\n    }],' >> ${file_name}
-
-
-		printf '\n  "slo_class": '$(cat ${autotune_json} | jq '.spec.slo.slo_class')',' >> ${file_name}
-		printf '\n  "experiment_id": '$(cat ${json_file} | jq 'sort_by(.experiment_name)' | jq '.['${index}'].experiment_id')',' >> ${file_name}
-		if [ "${index}" -eq $((arr_size-1)) ]; then
-			printf '\n  "direction": '$(cat ${autotune_json} | jq '.spec.slo.direction')'\n}]' >> ${file_name}
-		else
-			printf '\n  "direction": '$(cat ${autotune_json} | jq '.spec.slo.direction')'\n},\n' >> ${file_name}
-		fi
-	done
-	echo "expected json" >> ${LOG}
-	cat ${file_name} >> ${LOG}
-	echo ""  >> ${LOG}
-}
-
-# Get listStackTunables json
-# Input: experiment name, layer name
-function get_liststacktunables_json() {
-	exp_name=$1
-	layer_name=$2
-
-	if [[ -z "${exp_name}" && -z "${layer_name}" ]]; then
-		cmd="${curl_cmd}/listStackTunables"
-	elif [[ ! -z "${exp_name}" && ! -z "${layer_name}" ]]; then
-		cmd="${curl_cmd}/listStackTunables?experiment_name=${exp_name}&layer_name=${layer_name}"
-	elif [[ ! -z "${exp_name}" && -z "${layer_name}" ]];then
-		cmd="${curl_cmd}/listStackTunables?experiment_name=${exp_name}"
-	fi
-
-	json_file="${LOG_DIR}/actual_liststacktunables.json"
-	run_curl_cmd "${cmd}" "${json_file}"
-}
-
-# Test listStackTunables Autotune API
-# Input: application name, experiment name, layer name
-function liststacktunables_test() {
-	app_name=$1
-	exp_name=$2
-	layer_name=$3
-	test_name=${FUNCNAME}
-
-	if [[ -z ${exp_name} && -z "${layer_name}" ]]; then
-		test_name=${FUNCNAME}
-	elif [[ ! -z "${exp_name}" && -z "${layer_name}" ]]; then
-		test_name="liststacktunables_exp_name_test"
-	elif [[ ! -z "${exp_name}" && ! -z "${layer_name}" ]]; then
-		test_name="liststacktunables_exp_name_layer_name_test"
-	fi
-
-	LOG_DIR="${TEST_SUITE_DIR}/${test_name}"
-
-	# check if the directory exists
-	if [ ! -d ${LOG_DIR} ]; then
-		mkdir ${LOG_DIR}
-	fi
-
-	LOG="${LOG_DIR}/${test_name}.log"
-	AUTOTUNE_LOG="${LOG_DIR}/${test_name}_autotune.log"
-
-	# get autotune pod log
-	get_autotune_pod_log "${AUTOTUNE_LOG}"
-
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" | tee -a ${LOG}
-	echo "                    Running Testcase ${FUNCNAME}" | tee -a ${LOG}
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" | tee -a ${LOG}
-	if [[ -z ${exp_name} && -z "${layer_name}" ]]; then
-		echo "*******----------- ${FUNCNAME} for all applications----------*******" | tee -a ${LOG}
-		get_liststacktunables_json
-		create_expected_liststacktunables_json "${app_name}"
-	elif [[ ! -z ${exp_name} && ! -z "${layer_name}" ]]; then
-		echo "*******----------- ${FUNCNAME} for a specific application and specific layer----------*******" | tee -a ${LOG}
-		get_liststacktunables_json "${exp_name}" "${layer_name}"
-		create_expected_liststacktunables_json "${app_name}" "${exp_name}" "${layer_name}"
-	elif [[ ! -z ${exp_name} && -z "${layer_name}" ]]; then
-		echo "*******----------- ${FUNCNAME} for specified application----------*******" | tee -a ${LOG}
-		get_liststacktunables_json "${exp_name}"
-		create_expected_liststacktunables_json "${app_name}" "${exp_name}"
-	fi
-
-	compare_json "${LOG_DIR}/actual_liststacktunables.json" "${LOG_DIR}/expected_liststacktunables.json" "${test_name}"
-	echo "--------------------------------------------------------------" | tee -a ${LOG}
-}
-
-# Create expected listKruizeTunables json
-# Input: slo class, layer name
-function create_expected_listkruizetunables_json() {
-	slo_class=$1
-	layer_name=$2
-	file_name="${LOG_DIR}/expected_list_tunables.json"
-	layer_count=0
-
-	if [ -z "${slo_class}" ]; then
-		slo_class=("response_time" "throughput" "resource_usage")
-	fi
-
-	if [ -z "${layer_name}" ]; then
-		layer_name=("${kruize_layer_names[@]}")
-	fi
-
-	count="${#layer_name[@]}"
-
-	if [ -z "${slo_class}" ]; then
-		slo_class=("response_time" "throughput" "resource_usage")
-	fi
-
-	printf '[' > 	${file_name}
-
-	for layer in "${layer_name[@]}"
-	do
-		layer_json="${KRUIZE_LAYER_JSONS_DIR}/${layer}.json"
-
-		((count--))
-		printf '{\n         "layer_level": '$(cat ${layer_json} | jq .layer_level)','  >> ${file_name}
-		printf '\n         "tunables": [' >> ${file_name}
-		length=$(cat ${layer_json} | jq .tunables | jq length) >> ${file_name}
-		while [ "${length}" -ne 0 ]
-		do
-			((length--))
-			slo_count=0
-			slo=$(cat ${layer_json} | jq .tunables[${length}].slo_class[])
-			readarray -t slo <<<  ${slo}
-			for s in "${slo[@]}"
-			do
-				s=$(echo "${s}" | tr -d '"')
-				if [[ "${slo_class[slo_count]}" == "${s}" ]]; then
-					printf '{\n\t\t"value_type": '$(cat ${layer_json} | jq .tunables[${length}].value_type)',' >> ${file_name}
-					name=$(cat ${layer_json} | jq .tunables[${length}].name)
-					printf '\n\t\t"name": '${name}',\n' >> ${file_name}
-
-					lower_bound=$(cat ${layer_json} | jq .tunables[${length}].lower_bound)
-
-					if [[ "${name}" == "\"memoryLimit\""  ||  "${name}" == "\"memoryRequest\"" ]]; then
-						lower_bound=$(format_memory "${lower_bound}")
-					fi
-					printf '\n\t\t"lower_bound": '${lower_bound}',' >> ${file_name}
-
-					printf '\n\t\t"step": '$(cat ${layer_json} | jq .tunables[${length}].step)',' >> ${file_name}
-
-					if [[ ${layer} == "container" || ${layer} == "hotspot" ]]; then
-						url=$(kubectl get svc -n ${NAMESPACE} | grep prometheus-k8s | awk {'print $3'})
-						query=$(cat ${layer_json} |jq .tunables[${length}].queries.datasource[].query)
-						query=$(echo ${query} | sed 's/","/,/g; s/^"\|"$//g')
-						query=$(echo "${query/\$CONTAINER_LABEL$/container}")
-						query=$(echo "${query/\$POD_LABEL$/pod}")
-						#query=$(echo "${query/\$POD$/${app}}")
-						echo -e '\n                "query_url": "'${query}'",'  >> ${file_name}
-					else
-						printf '\n\t\t"query_url": "none",' >> ${file_name}
-
-					fi
-
-					upper_bound=$(cat ${layer_json} | jq .tunables[${length}].upper_bound)
-					if [[ "${name}" == "\"memoryLimit\"" || "${name}" == "\"memoryRequest\"" ]]; then
-						upper_bound=$(format_memory "${upper_bound}")
-					fi
-					printf '\n\t\t"upper_bound": '${upper_bound}'' >> ${file_name}
-
-					if [ "${length}" -ne 0 ]; then
-						printf '\n\t }, \n' >> ${file_name}
-					else
-						printf '\n\t }], \n' >> ${file_name}
-					fi
-				fi
-			done
-		done
-		printf '\n         "layer_id": '$(cat ${json_file} | jq '.['${layer_count}'].layer_id')',' >> ${file_name}
-		printf '\n         "layer_name": '$(cat ${layer_json} | jq .layer_name)','  >> 	${file_name}
-		printf '\n' >> ${file_name}
-		echo '         "layer_details": '$(cat ${layer_json} | jq .details)''  >> ${file_name}
-		if [ "${count}" -eq 0 ]; then
-			printf '}' >> ${file_name}
-		else
-			printf '}, \n' >> ${file_name}
-		fi
-		((layer_count++))
-	done
-
-	printf ']\n' >> ${file_name}
-
-	echo "expectd json" >> ${LOG}
-	cat ${file_name} >> ${LOG}
-	echo "" >> ${LOG}
-	layer_name=("")
-}
-
-# Get listKruizeTunables json
-# Input: slo class, layer name
-function get_list_kruize_tunables_json() {
-	slo_class=$1
-	layer_name=$2
-
-	if [[ -z "${slo_class}" && -z "${layer_name}" ]]; then
-		cmd="${curl_cmd}/listKruizeTunables"
-	elif [[ ! -z "${slo_class}" && -z "${layer_name}" ]]; then
-		cmd="${curl_cmd}/listKruizeTunables?slo_class=${slo_class}"
-	elif [[ ! -z "${slo_class}" && ! -z "${layer_name}" ]]; then
-		cmd="${curl_cmd}/listKruizeTunables?slo_class=${slo_class}&layer_name=${layer_name}"
-	fi
-
-	json_file="${LOG_DIR}/actual_list_tunables.json"
-	run_curl_cmd "${cmd}" "${json_file}"
-}
-
-# Test listKruizeTunables Autotune API
-# Input: slo class, layer name
-function list_kruize_tunables_test() {
-	slo_class=$1
-	layer_name=$2
-	test_name=${FUNCNAME}
-
-	if [[ -z "${slo_class}" && -z "${layer_name}" ]]; then
-		test_name=${FUNCNAME}
-	elif [[ ! -z "${slo_class}" && -z "${layer_name}" ]]; then
-		test_name="list_kruize_tunables_slo_class_test"
-	elif [[ ! -z "${slo_class}" && ! -z "${layer_name}" ]]; then
-		test_name="list_kruize_tunables_slo_class_layer_name_test"
-	fi
-
-	LOG_DIR="${TEST_SUITE_DIR}/${test_name}"
-
-	# check if the directory exists
-	if [ ! -d ${LOG_DIR} ]; then
-		mkdir ${LOG_DIR}
-	fi
-
-	LOG="${LOG_DIR}/${test_name}.log"
-	AUTOTUNE_LOG="${LOG_DIR}/${test_name}_autotune.log"
-
-	# get autotune pod log
-	get_autotune_pod_log "${AUTOTUNE_LOG}"
-
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" | tee -a ${LOG}
-	echo "                    Running Testcase ${test_name}" | tee -a ${LOG}
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" | tee -a ${LOG}
-	if [[ -z "${slo_class}" && -z "${layer_name}" ]]; then
-		echo "*******----------- ${FUNCNAME} for all applications ----------*******" | tee -a ${LOG}
-		get_list_kruize_tunables_json
-		create_expected_listkruizetunables_json
-	elif [[ ! -z "${slo_class}" && -z "${layer_name}" ]]; then
-		echo "*******----------- ${FUNCNAME} for specified slo ----------*******" | tee -a ${LOG}
-		get_list_kruize_tunables_json "${slo_class}"
-		create_expected_listkruizetunables_json "${slo_class}"
-	elif [[ ! -z "${slo_class}" && ! -z "${layer_name}" ]]; then
-		echo "*******----------- ${FUNCNAME} for specified slo and specific layer ----------*******" | tee -a ${LOG}
-		get_list_kruize_tunables_json "${slo_class}" "${layer_name}"
-		create_expected_listkruizetunables_json "${slo_class}" "${layer_name}"
-	fi
-	compare_json "${LOG_DIR}/actual_list_tunables.json" "${LOG_DIR}/expected_list_tunables.json" "${test_name}"
-	echo "--------------------------------------------------------------" | tee -a ${LOG}
-}
-
-# Create the expected listStackLayers json
-# Input: application name, experiment name
-function create_expected_liststacklayers_json() {
-	layercount=0
-	app_name=$1
-	exp_name=$2
-
-	file_name="${LOG_DIR}/expected_liststacklayers.json"
-
-	# check if the experiment name is passed, if not the consider all the experiments
-	if [ -z "${exp_name}" ]; then
-		exp_names=(${autotune_names[@]})
-	else
-		exp_names=("${exp_name}")
-	fi
-
-	echo "app_name = $app_name"
-	echo "exp names = ${exp_names[@]}"
-
-	arr_size=${#exp_names[@]}
-
-	printf '[' > ${file_name}
-	for index in ${!exp_names[@]}
-	do
-		autotune_json="${AUTOTUNE_JSONS_DIR}/${exp_names[index]}.json"
-		printf '{\n    "experiment_name": "'${exp_names[index]}'",' >> ${file_name}
-		# do comparision of actual and expected name
-		objectve_function=$(cat ${autotune_json} | jq '.spec.slo.objective_function')
-		printf '\n    "objective_function": '$(cat ${autotune_json} | jq '.spec.slo.objective_function')',' >> ${file_name}
-
-		hpo_algo_impl=$(cat ${autotune_json} | jq '.spec.slo.hpo_algo_impl')
-
-		if [ ${hpo_algo_impl} == null ]; then
-			hpo_algo_impl="optuna_tpe"
-		fi
-
-		printf '\n    "hpo_algo_impl":  "'${hpo_algo_impl}'",' >> ${file_name}
-		printf '\n    "deployment_name":  "'${deployment_names[index]}'",' >> ${file_name}
-		printf '\n    "namespace":  '$(cat ${autotune_json} | jq '.metadata.namespace')',' >> ${file_name}
-
-		images_count=${#container_images[@]}
-		printf '\n    "stacks": [{' >> ${file_name}
-		for i in ${!container_images[@]}
-		do
-
-			# Pick the expected layers based on the application
-			read -r -a layer_names<<<"${layer_configs[$app_name]}"
-
-			layer_names=(${layer_names[@]})
-
-			layercount=${#layer_names[@]}
-
-			printf '\n\t     "layers": [' >> ${file_name}
-			for layer in ${layer_names[@]}
-			do
-				layer_json="${KRUIZE_LAYER_JSONS_DIR}/${layer}.json"
-
-				printf '{\n\t        "layer_level": '$(cat ${layer_json} | jq .layer_level)',' >> ${file_name}
-				layer_level=$(cat ${layer_json} | jq .layer_level)
-
-				printf '\n\t         "layer_id": '$(cat ${json_file} | jq 'sort_by(.experiment_name)' | jq '.['${index}'].stacks['${i}'].layers['${layer_level}'].layer_id')',' >> ${file_name}
-				printf '\n\t         "layer_name": '$(cat ${layer_json} | jq .layer_name)',' >> ${file_name}
-				printf '\n\t' >> ${file_name}
-				echo '         "layer_details": '$(cat ${layer_json} | jq .details)'' >> ${file_name}
-				((layercount--))
-				if [ "${layercount}" -eq 0 ]; then
-					printf '\t     }],' >> ${file_name}
-				else
-					printf '\t     },\n' >> ${file_name}
-				fi
-			done
-			printf '\n     "stack_name": "'${container_images[i]}'"' >> ${file_name}
-			if [ "${i}" -lt $((images_count-1)) ]; then
-				printf '     },' >> ${file_name}
-			fi
-		done
-		printf '\n    }],' >> ${file_name}
-
-		printf '\n    "experiment_id": '$(cat ${json_file} | jq 'sort_by(.experiment_name)' | jq '.['${index}'].experiment_id')',' >> ${file_name}
-		printf '\n    "slo_class": '$(cat ${autotune_json} | jq '.spec.slo.slo_class')',' >> ${file_name}
-		if [ "${index}" -eq $((arr_size-1)) ]; then
-			printf '\n    "direction": '$(cat ${autotune_json} | jq '.spec.slo.direction')'\n}' >> ${file_name}
-		else
-			printf '\n    "direction": '$(cat ${autotune_json} | jq '.spec.slo.direction')'\n},\n' >> ${file_name}
-		fi
-	done
-	printf ']' >> ${file_name}
-	echo "expected json" >> ${LOG}
-	cat ${file_name} >> ${LOG}
-	echo "" >> ${LOG}
-}
-
-# Get the listStackLayers json
-# Input: experiment name
-function get_liststacklayers_json() {
-	exp_name=$1
-	if [ -z "${exp_name}" ]; then
-		cmd="${curl_cmd}/listStackLayers"
-	else
-		echo "experiment name = ${exp_name}"
-		cmd="${curl_cmd}/listStackLayers?experiment_name=${exp_name}"
-	fi
-
-
-	json_file="${LOG_DIR}/actual_liststacklayers.json"
-	run_curl_cmd "${cmd}" "${json_file}"
-}
-
-# Test listStackLayers Autotune API
-# input: application name, experiment name
-function liststacklayers_test() {
-	app_name=$1
-	exp_name=$2
-	test_name=$FUNCNAME
-
-	if [ ! -z "${exp_name}" ]; then
-		test_name="liststacklayers_exp_name_test"
-	fi
-
-	LOG_DIR="${TEST_SUITE_DIR}/${test_name}"
-
-	# check if the directory exists
-	if [ ! -d ${LOG_DIR} ]; then
-		mkdir ${LOG_DIR}
-	fi
-
-	LOG="${LOG_DIR}/${test_name}.log"
-	AUTOTUNE_LOG="${LOG_DIR}/${test_name}_autotune.log"
-
-	# get autotune pod log
-	get_autotune_pod_log "${AUTOTUNE_LOG}"
-
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" | tee  -a ${LOG}
-	echo "                    Running Testcase ${test_name}" | tee  -a ${LOG}
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" | tee -a ${LOG}
-
-	if [ -z "${exp_name}" ]; then
-		get_liststacklayers_json
-		create_expected_liststacklayers_json "${app_name}"
-	else
-		get_liststacklayers_json "${exp_name}"
-		create_expected_liststacklayers_json "${app_name}" "${exp_name}"
-	fi
-	compare_json "${LOG_DIR}/actual_liststacklayers.json" "${LOG_DIR}/expected_liststacklayers.json" "${test_name}"
-	echo "--------------------------------------------------------------" | tee -a ${LOG}
-}
-
-# Create the expected listStacks json
-# Input: experiment name
-function create_expected_liststacks_json() {
-	exp_name=$1
-	file_name="${LOG_DIR}/expected_liststacks.json"
-
-	# check if the experiment name is passed, if not the consider all the experiments
-	if [ -z "${exp_name}" ]; then
-		exp_names=(${autotune_names[@]})
-	else
-		exp_names=(${exp_name})
-	fi
-
-	echo "exp name = ${exp_names[@]}"
-
-	arr_size=${#exp_names[@]}
-
-	printf '[' > ${file_name}
-	for index in ${!exp_names[@]}
-	do
-		autotune_json="${AUTOTUNE_JSONS_DIR}/${exp_names[index]}.json"
-		printf '{\n  "experiment_name": "'${exp_names[index]}'",' >> ${file_name}
-		printf '\n  "objective_function": '$(cat ${autotune_json} | jq '.spec.slo.objective_function')',' >> ${file_name}
-		printf '\n  "deployment_name": "'${deployment_names[index]}'",' >> ${file_name}
-		hpo_algo_impl=$(cat ${autotune_json} | jq '.spec.slo.hpo_algo_impl')
-
-		if [ ${hpo_algo_impl} == null ]; then
-			hpo_algo_impl="optuna_tpe"
-		fi
-
-		printf '\n  "hpo_algo_impl":  "'${hpo_algo_impl}'",' >> ${file_name}
-		printf '\n  "namespace": '$(cat ${autotune_json} | jq '.metadata.namespace')',' >> ${file_name}
-		printf '\n  "slo_class": '$(cat ${autotune_json} | jq '.spec.slo.slo_class')',' >> ${file_name}
-
-		images_count=${#container_images[@]}
-		printf '\n  "stacks": [' >> ${file_name}
-		for i in ${!container_images[@]}
-		do
-			printf '\n\t\t "'${container_images[i]}'"' >> ${file_name}
-			if [ "${i}" -lt $((images_count-1)) ]; then
-				printf ',' >> ${file_name}
-			fi
-		done
-		printf '\n            ],' >> ${file_name}
-		printf '\n  "experiment_id": '$(cat ${json_file} | jq 'sort_by(.experiment_name)' | jq '.['${index}'].experiment_id')',' >> ${file_name}
-		if [ "${index}" -eq $((arr_size-1)) ]; then
-			printf '\n  "direction": '$(cat ${autotune_json} | jq '.spec.slo.direction')'\n}' >> ${file_name}
-		else
-			printf '\n  "direction": '$(cat ${autotune_json} | jq '.spec.slo.direction')'\n},\n' >> ${file_name}
-		fi
-	done
-	printf ']' >> ${file_name}
-	echo "expected json" >> ${LOG}
-	cat ${file_name} >> ${LOG}
-	echo "" >> ${LOG}
-}
-
-# Get listStacks json
-# Input: experiment name
-function get_liststacks_json() {
-	exp_name=$1
-	if [ -z "${exp_name}" ]; then
-		cmd="${curl_cmd}/listStacks"
-	else
-		cmd="${curl_cmd}/listStacks?experiment_name=${exp_name}"
-	fi
-
-	json_file="${LOG_DIR}/actual_liststacks.json"
-	run_curl_cmd "${cmd}" "${json_file}"
-}
-
-# Test listStacks Autotune API
-# input: experiment name
-function liststacks_test() {
-	exp_name=$1
-	test_name=$FUNCNAME
-
-	if [ ! -z "${exp_name}" ]; then
-		test_name="liststacks_exp_name_test"
-	fi
-
-	LOG_DIR="${TEST_SUITE_DIR}/${test_name}"
-
-	# check if the directory exists
-	if [ ! -d ${LOG_DIR} ]; then
-		mkdir ${LOG_DIR}
-	fi
-
-	LOG="${LOG_DIR}/${test_name}.log"
-	AUTOTUNE_LOG="${LOG_DIR}/${test_name}_autotune.log"
-
-	# get autotune pod log
-	get_autotune_pod_log "${AUTOTUNE_LOG}"
-
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" | tee -a ${LOG}
-	echo "                    Running Testcase ${test_name}" | tee -a ${LOG}
-	echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" | tee -a ${LOG}
-	if [ -z "${exp_name}" ]; then
-		echo "*******----------- ${test_name} for all experiments ----------*******" | tee -a ${LOG}
-		get_liststacks_json
-		create_expected_liststacks_json
-	else
-		echo "*******----------- ${test_name} for specified experiment - ${exp_name}----------*******" | tee -a ${LOG}
-		get_liststacks_json "${exp_name}"
-		create_expected_liststacks_json "${exp_name}"
-	fi
-	compare_json "${LOG_DIR}/actual_liststacks.json" "${LOG_DIR}/expected_liststacks.json" "${test_name}"
-	echo "--------------------------------------------------------------" | tee -a ${LOG}
-}
-
 
 function label_pods() {
 	local -n _app_pod_names=$1
@@ -1773,7 +832,7 @@ function deploy_app_dependencies() {
 
 	echo "yaml dir= ${yaml_dir}" | tee -a ${LOG}
 	echo -n "Applying application autotune yaml..." | tee -a ${LOG}
-	kubectl apply -f ${yaml_dir} >> ${AUTOTUNE_SETUP_LOG}
+	kubectl apply -f ${yaml_dir} >> ${KRUIZE_SETUP_LOG}
 	echo "done" | tee -a ${LOG}
 }
 
@@ -1794,17 +853,11 @@ function match_ids() {
 # input : Log file path to store the pod information
 function get_autotune_pod_log() {
 	log=$1
-	# Fetch the autotune container log
-	container="autotune"
+	# Fetch the container log
 
 	echo "target = $target"
-	if [ ${target} == "crc" ]; then
-		autotune_pod=$(kubectl get pod -n ${NAMESPACE} | grep kruize | grep -v kruize-ui | grep -v kruize-db | cut -d " " -f1)
-		pod_log_msg=$(kubectl logs ${autotune_pod} -n ${NAMESPACE})
-	else
-		autotune_pod=$(kubectl get pod -n ${NAMESPACE} | grep autotune | cut -d " " -f1)
-		pod_log_msg=$(kubectl logs ${autotune_pod} -n ${NAMESPACE}  -c ${container})
-	fi
+	kruize_pod=$(kubectl get pod -n ${NAMESPACE} | grep kruize | grep -v kruize-ui | grep -v kruize-db | cut -d " " -f1)
+	pod_log_msg=$(kubectl logs ${kruize_pod} -n ${NAMESPACE})
 	echo "${pod_log_msg}" > "${log}"
 }
 
@@ -1862,6 +915,29 @@ function create_performance_profile() {
         fi
 }
 
+function update_performance_profile() {
+	perf_profile_json=$1
+	operation="update"
+	
+	echo "Forming the curl command to update the performance profile ..."
+	form_curl_cmd "${operation}"
+	
+	curl_cmd="${curl_cmd}/updatePerformanceProfile -d @${perf_profile_json}"
+	echo "curl_cmd = ${curl_cmd}"
+	
+	status_json=$($curl_cmd)
+	echo "update performance profile status = ${status_json}"
+	echo ""
+	echo "Command used to update the performance profile = ${curl_cmd}"
+	echo ""
+	perf_profile_status=$(echo ${status_json} | jq '.status')
+	echo "update performance profile status = ${perf_profile_status}"
+	if [ "${perf_profile_status}" != \"SUCCESS\" ]; then
+		echo "Failed! Update performance profile failed. Status - ${perf_profile_status}"
+		exit 1
+	fi
+}
+
 function create_metric_profile() {
         metric_profile_json=$1
 
@@ -1897,7 +973,7 @@ function kruize_local_ros_patch() {
 	KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT="${CRC_DIR}/openshift/kruize-crc-openshift.yaml"
 	KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE="${CRC_DIR}/minikube/kruize-crc-minikube.yaml"
 
-	if [ ${cluster_type} == "minikube" ]; then
+	if [ ${cluster_type} == "minikube" ] || [ ${cluster_type} == "kind" ]; then
       		if grep -q '"isROSEnabled": "false"' ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}; then
       		  	echo "Setting flag 'isROSEnabled' to 'true'"
         		sed -i 's/"isROSEnabled": "false"/"isROSEnabled": "true"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}
@@ -1943,35 +1019,356 @@ function kruize_remote_patch() {
 	KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT="${CRC_DIR}/openshift/kruize-crc-openshift.yaml"
 	KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE="${CRC_DIR}/minikube/kruize-crc-minikube.yaml"
 
-
-  if [ ${cluster_type} == "minikube" ]; then
-    sed -i -E 's/"isROSEnabled": "false",?\s*//g; s/"local": "true",?\s*//g'  ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}    #this will remove the entry and use default set by java i.e. isROSEnabled=true and local=false
-  elif [ ${cluster_type} == "openshift" ]; then
-    sed -i -E 's/"isROSEnabled": "false",?\s*//g; s/"local": "true",?\s*//g'  ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
-    sed -i 's/\([[:space:]]*\)\(storage:\)[[:space:]]*[0-9]\+Mi/\1\2 1Gi/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
-    sed -i 's/\([[:space:]]*\)\(memory:\)[[:space:]]*".*"/\1\2 "2Gi"/; s/\([[:space:]]*\)\(cpu:\)[[:space:]]*".*"/\1\2 "2"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
-  fi
+	if [ ${cluster_type} == "minikube" ] || [ ${cluster_type} == "kind" ]; then
+		sed -i -E 's/"isROSEnabled": "false",?\s*//g; s/"local": "true",?\s*//g'  ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}    #this will remove the entry and use default set by java i.e. isROSEnabled=true and local=false
+	elif [ ${cluster_type} == "openshift" ]; then
+		sed -i -E 's/"isROSEnabled": "false",?\s*//g; s/"local": "true",?\s*//g'  ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+		sed -i 's/\([[:space:]]*\)\(storage:\)[[:space:]]*[0-9]\+Mi/\1\2 1Gi/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+		sed -i 's/\([[:space:]]*\)\(memory:\)[[:space:]]*".*"/\1\2 "2Gi"/; s/\([[:space:]]*\)\(cpu:\)[[:space:]]*".*"/\1\2 "2"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+	fi
 }
 
 #
 # Modify "serviceName" and "namespace" datasource manifest fields based on input parameters
 #
 function kruize_local_datasource_manifest_patch() {
-  CRC_DIR="./manifests/crc/default-db-included-installation"
-  KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT="${CRC_DIR}/openshift/kruize-crc-openshift.yaml"
-  KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE="${CRC_DIR}/minikube/kruize-crc-minikube.yaml"
+	CRC_DIR="./manifests/crc/default-db-included-installation"
+	KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT="${CRC_DIR}/openshift/kruize-crc-openshift.yaml"
+	KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE="${CRC_DIR}/minikube/kruize-crc-minikube.yaml"
 
-  if [ ${cluster_type} == "minikube" ]; then
-    if [[ ! -z "${servicename}" &&  ! -z "${datasource_namespace}" ]]; then
-     sed -i 's/"serviceName": "[^"]*"/"serviceName": "'${servicename}'"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}
-     sed -i 's/"namespace": "[^"]*"/"namespace": "'${datasource_namespace}'"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}
-     sed -i 's/"url": ".*"/"url": ""/' ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}
+	if [ ${cluster_type} == "minikube" ]; then
+		if [[ ! -z "${servicename}" &&  ! -z "${datasource_namespace}" ]]; then
+			sed -i 's/"serviceName": "[^"]*"/"serviceName": "'${servicename}'"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}
+			sed -i 's/"namespace": "[^"]*"/"namespace": "'${datasource_namespace}'"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}
+			sed -i 's/"url": ".*"/"url": ""/' ${KRUIZE_CRC_DEPLOY_MANIFEST_MINIKUBE}
+		fi
+	elif [ ${cluster_type} == "openshift" ]; then
+		if [[ ! -z "${servicename}" &&  ! -z "${datasource_namespace}" ]]; then
+			sed -i 's/"serviceName": "[^"]*"/"serviceName": "'${servicename}'"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+			sed -i 's/"namespace": "[^"]*"/"namespace": "'${datasource_namespace}'"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+			sed -i 's/"url": ".*"/"url": ""/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+		fi
+	fi
+}
+
+#
+# Update kruize cpu/memory resources, PV storage for openshift
+#
+function kruize_local_patch() {
+	CRC_DIR="./manifests/crc/default-db-included-installation"
+	KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT="${CRC_DIR}/openshift/kruize-crc-openshift.yaml"
+
+	if [ ${cluster_type} == "openshift" ]; then
+		sed -i 's/\([[:space:]]*\)\(storage:\)[[:space:]]*[0-9]\+Mi/\1\2 1Gi/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+		sed -i 's/\([[:space:]]*\)\(memory:\)[[:space:]]*".*"/\1\2 "2Gi"/; s/\([[:space:]]*\)\(cpu:\)[[:space:]]*".*"/\1\2 "2"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
+	fi
+}
+
+# Deploy kruize using operator
+function deploy_kruize_operator() {
+	echo "Deploying Kruize using operator..." | tee -a ${LOG}
+
+	# Create namespace based on cluster type
+	case "${cluster_type}" in
+		openshift)
+			NAMESPACE="openshift-tuning"
+			;;
+		*)
+			NAMESPACE="monitoring"
+			;;
+	esac
+
+	echo "Creating namespace ${NAMESPACE}..." | tee -a ${LOG}
+	kubectl create namespace "${NAMESPACE}" 2>/dev/null || echo "Namespace ${NAMESPACE} already exists" | tee -a ${LOG}
+
+	# Clone kruize-operator repo if not already present
+	OPERATOR_REPO_DIR="${KRUIZE_REPO}/kruize-operator"
+	if [ ! -d "${OPERATOR_REPO_DIR}" ]; then
+		echo "Cloning kruize-operator repository..." | tee -a ${LOG}
+		pushd "${KRUIZE_REPO}" > /dev/null
+		clone_repos "kruize-operator"
+		popd > /dev/null
+	else
+		echo "kruize-operator repository already exists, using existing clone..." | tee -a ${LOG}
+	fi
+
+	# Patch the CR resources before deployment for openshift
+	if [ ${cluster_type} == "openshift" ]; then
+	  kruize_operator_patch
+	else
+	  remove_optional_cr_blocks_for_minikube
+	fi
+
+	# Deploy using operator
+	pushd "${OPERATOR_REPO_DIR}" > /dev/null
+
+	echo "Deploying operator using make deploy..." | tee -a ${LOG}
+
+	# Set the operator image if specified
+	if [ ! -z "${KRUIZE_OPERATOR_IMAGE}" ]; then
+		echo "Using operator image: ${KRUIZE_OPERATOR_IMAGE}" | tee -a ${LOG}
+		export IMG="${KRUIZE_OPERATOR_IMAGE}"
+	fi
+
+	# Deploy the operator using make
+	make deploy-${cluster_type} >> ${KRUIZE_SETUP_LOG} 2>&1
+
+	if [ $? -ne 0 ]; then
+		echo "Error: Failed to deploy Kruize operator using make deploy" | tee -a ${LOG}
+		echo "Check ${KRUIZE_SETUP_LOG} for details" | tee -a ${LOG}
+		popd > /dev/null
+		exit 1
+	fi
+
+	echo "Operator deployed successfully" | tee -a ${LOG}
+
+	# Apply the Kruize CR (Custom Resource)
+	echo "Applying Kruize CR..." | tee -a ${LOG}
+
+	# Determine the CR file
+	CR_FILE="config/samples/v1alpha1_kruize.yaml"
+
+	if [ -n "${KRUIZE_DOCKER_IMAGE}" ]; then
+	  sed -i -E 's#^([[:space:]]*)autotune_image:.*#\1autotune_image: "'"${KRUIZE_DOCKER_IMAGE}"'"#' "./config/samples/v1alpha1_kruize.yaml"
+	fi
+
+	sed -i -E 's#^([[:space:]]*)cluster_type:.*#\1cluster_type: "'"${cluster_type}"'"#' "./config/samples/v1alpha1_kruize.yaml"
+
+	sed -i -E 's#^([[:space:]]*)namespace:.*#\1namespace: "'"${NAMESPACE}"'"#' "./config/samples/v1alpha1_kruize.yaml"
+
+	if [ -f "${CR_FILE}" ]; then
+		kubectl apply -f "${CR_FILE}" -n $NAMESPACE>> ${KRUIZE_SETUP_LOG} 2>&1
+		if [ $? -ne 0 ]; then
+			echo "Error: Failed to apply Kruize CR" | tee -a ${LOG}
+			echo "Check ${KRUIZE_SETUP_LOG} for details" | tee -a ${LOG}
+			popd > /dev/null
+			exit 1
+		fi
+		echo "Kruize CR applied successfully" | tee -a ${LOG}
+	else
+		echo "Warning: CR file ${CR_FILE} not found, skipping CR application" | tee -a ${LOG}
+	fi
+
+	sleep 10
+  echo
+  echo "⏳ Waiting for all operator pods to be ready..."
+
+  wait_for_pod_ready kruize-db
+
+  wait_for_pod_ready kruize
+
+  wait_for_pod_ready kruize-ui-nginx
+
+  echo "✅ All Kruize application pods are ready!"
+
+  echo "✅ Deployment complete! Checking status..."
+  kubectl get kruize -n $NAMESPACE
+  kubectl get pods -n $NAMESPACE
+
+	popd > /dev/null
+	echo "Kruize operator deployment completed" | tee -a ${LOG}
+}
+
+# Cleanup kruize operator deployment
+function cleanup_kruize_operator() {
+	echo "Cleaning up Kruize operator deployment..." | tee -a ${LOG}
+
+	OPERATOR_REPO_DIR="${KRUIZE_REPO}/kruize-operator"
+	if [ -d "${OPERATOR_REPO_DIR}" ]; then
+		pushd "${OPERATOR_REPO_DIR}" > /dev/null
+
+		echo "Undeploying operator using make undeploy..." | tee -a ${LOG}
+		make undeploy-${cluster_type} >> ${KRUIZE_SETUP_LOG} 2>&1
+
+		if [ $? -ne 0 ]; then
+			echo "Warning: Failed to undeploy operator, continuing cleanup..." | tee -a ${LOG}
+		fi
+
+		popd > /dev/null
+	else
+		echo "Warning: kruize-operator directory not found at ${OPERATOR_REPO_DIR}" | tee -a ${LOG}
+	fi
+
+	echo "Kruize operator cleanup completed" | tee -a ${LOG}
+}
+
+# Helper function to wait for pod to be ready based on label and namespace
+wait_for_pod_ready() {
+  local label="$1"
+  local namespace="${2:-$NAMESPACE}"
+  local create_timeout="${3:-180}"
+  local ready_timeout="${4:-600s}"
+
+  local elapsed=0
+  local pod_names=""
+
+  while [ "$elapsed" -lt "$create_timeout" ]; do
+    pod_names=$(kubectl get pods -l "app=${label}" -n "$namespace" -o name 2>/dev/null)
+    if [ -n "$pod_names" ]; then
+      echo
+      break
     fi
-  elif [ ${cluster_type} == "openshift" ]; then
-    if [[ ! -z "${servicename}" &&  ! -z "${datasource_namespace}" ]]; then
-      sed -i 's/"serviceName": "[^"]*"/"serviceName": "'${servicename}'"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
-      sed -i 's/"namespace": "[^"]*"/"namespace": "'${datasource_namespace}'"/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
-      sed -i 's/"url": ".*"/"url": ""/' ${KRUIZE_CRC_DEPLOY_MANIFEST_OPENSHIFT}
-    fi
+    echo -n "."
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  if [ "$elapsed" -ge "$create_timeout" ]; then
+    echo
+    echo "❌ Timeout waiting for pod with label app=${label} to be created"
+    kubectl get pods -n "$namespace"
+    exit 1
   fi
+
+  echo "⏳ Waiting for pod with label app=${label} to be ready..."
+  kubectl wait --for=condition=Ready pod -l "app=${label}" -n "$namespace" --timeout="$ready_timeout"
+  if [ $? -ne 0 ]; then
+    echo "❌ Pod with label app=${label} failed to become ready"
+    kubectl get pods -n "$namespace"
+    kubectl describe pod -l "app=${label}" -n "$namespace"
+    exit 1
+  fi
+}
+
+
+# Patch operator CR resources for functional local monitoring tests
+function kruize_operator_patch() {
+  OPERATOR_REPO_DIR="${KRUIZE_REPO}/kruize-operator"
+
+  CR_FILE="${OPERATOR_REPO_DIR}/config/samples/v1alpha1_kruize.yaml"
+
+  if [ ! -f "${CR_FILE}" ]; then
+   echo "Warning: CR file ${CR_FILE} not found, skipping resource patching"
+   return
+  fi
+
+  echo "Patching operator CR resources in ${CR_FILE}..."
+
+  # Backup original file
+  cp "${CR_FILE}" "${CR_FILE}.bak"
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    SED_INPLACE="sed -i ''"
+  else
+    SED_INPLACE="sed -i"
+  fi
+
+
+  # Update kruize-db resources
+  ${SED_INPLACE} -i '/kruize-db:/,/volumeMounts:/ {
+    /requests:/,/limits:/ {
+      s/cpu: ".*"/cpu: "2"/g
+      s/memory: ".*"/memory: "2Gi"/g
+    }
+  }' ${CR_FILE}
+
+  ${SED_INPLACE} -i '/kruize-db:/,/volumeMounts:/ {
+    /limits:/,/volumeMounts:/ {
+      s/cpu: ".*"/cpu: "2"/g
+      s/memory: ".*"/memory: "2Gi"/g
+    }
+  }' ${CR_FILE}
+
+  # Update kruize application resources
+  ${SED_INPLACE} -i '/^[[:space:]]*kruize:/,$ {
+    /^[[:space:]]*requests:/,/^[[:space:]]*limits:/ {
+        s/cpu: ".*"/cpu: "2"/g
+        s/memory: ".*"/memory: "2Gi"/g
+    }
+    /^[[:space:]]*limits:/,$ {
+        s/cpu: ".*"/cpu: "2"/g
+        s/memory: ".*"/memory: "2Gi"/g
+    }
+  }' ${CR_FILE}
+
+  # Update persistent volume configuration
+  ${SED_INPLACE} -i '/persistentVolume:/,/persistentVolumeClaim:/ {
+    /capacity:/,/accessModes:/ {
+      s/storage: ".*"/storage: "1Gi"/
+    }
+  }' ${CR_FILE}
+
+  # Update persistent volume claim storage request
+  ${SED_INPLACE} -i '/persistentVolumeClaim:/,/kruize-db:/ {
+    /resources:/,/labels:/ {
+      s/storage: ".*"/storage: "1Gi"/
+    }
+  }' ${CR_FILE}
+
+  echo "Operator CR resources patched successfully"
+}
+
+# Patch to remove resources config from CR for minikube/kind clusters
+remove_optional_cr_blocks_for_minikube() {
+  local CR_FILE="${OPERATOR_REPO_DIR}/config/samples/v1alpha1_kruize.yaml"
+
+  if [ ! -f "${CR_FILE}" ]; then
+    echo "Warning: CR file ${CR_FILE} not found, skipping cleanup"
+    return
+  fi
+
+  echo "Removing optional CR blocks for minikube from ${CR_FILE}..."
+
+  cp "${CR_FILE}" "${CR_FILE}.bak"
+
+  awk '
+    BEGIN {
+      skip = 0
+    }
+
+    # start skipping these top-level spec children
+    /^  persistentVolume:$/      { skip = 1; next }
+    /^  persistentVolumeClaim:$/ { skip = 1; next }
+    /^  kruize-db:$/             { skip = 1; next }
+    /^  kruize:$/                { skip = 1; next }
+
+    # next top-level spec child stops skipping
+    /^  [a-zA-Z0-9_-]+:/ {
+      skip = 0
+    }
+
+    !skip { print }
+  ' "${CR_FILE}" > "${CR_FILE}.tmp" && mv "${CR_FILE}.tmp" "${CR_FILE}"
+}
+
+###########################################
+#   Benchmarks Install
+###########################################
+function benchmarks_install() {
+	APP_NAMESPACE="${1:-${APP_NAMESPACE}}"
+	BENCHMARK="${2:-tfb}"
+	MANIFESTS="${3:-default_manifests}"
+
+	echo
+	echo "#######################################"
+	pushd benchmarks >/dev/null
+	  if [ ${BENCHMARK} == "tfb" ]; then
+      echo "Installing TechEmpower (Quarkus REST EASY) benchmark into cluster"
+      pushd techempower >/dev/null
+			  kubectl apply -f manifests/${MANIFESTS} -n ${APP_NAMESPACE}
+        check_err "ERROR: TechEmpower app failed to start, exiting"
+      popd >/dev/null
+    elif [ ${BENCHMARK} == "petclinic" ]; then
+			echo "Installing spring petclinic benchmark into cluster"
+			pushd spring-petclinic >/dev/null
+        if [ "${MANIFESTS}" != "default_manifests" ]; then
+          kubectl apply -f manifests/${MANIFESTS} -n ${APP_NAMESPACE}
+        else
+          kubectl apply -f manifests/*.yaml -n ${APP_NAMESPACE}
+        fi
+        check_err "ERROR: spring petclinic failed to start, exiting"
+			popd >/dev/null
+    elif [ ${BENCHMARK} == "sysbench" ]; then
+   echo "Installing sysbench benchmark into cluster"
+   pushd sysbench >/dev/null
+        if [ "${MANIFESTS}" != "default_manifests" ]; then
+          kubectl apply -f manifests/${MANIFESTS} -n ${APP_NAMESPACE}
+        else
+          kubectl apply -f manifests/*.yaml -n ${APP_NAMESPACE}
+        fi
+        check_err "ERROR: sysbench failed to start, exiting"
+   popd >/dev/null
+  fi
+  popd >/dev/null
+	echo "#######################################"
+	echo
 }

@@ -39,17 +39,17 @@ import com.autotune.service.HealthService;
 import com.autotune.service.InitiateListener;
 import com.autotune.utils.CloudWatchAppender;
 import com.autotune.utils.KruizeConstants;
-import com.autotune.utils.MetricsConfig;
 import com.autotune.utils.ServerContext;
-import com.autotune.utils.filter.KruizeCORSFilter;
-import io.prometheus.client.exporter.MetricsServlet;
-import io.prometheus.client.hotspot.DefaultExports;
+import com.autotune.utils.filter.KruizeCORSHandler;
+import io.prometheus.metrics.exporter.servlet.javax.PrometheusMetricsServlet;
+import io.prometheus.metrics.instrumentation.jvm.JvmMetrics;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.config.Configurator;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.ee8.servlet.ServletContextHandler;
 import org.eclipse.jetty.ee8.servlet.ServletHolder;
+import org.eclipse.jetty.server.handler.CrossOriginHandler;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.hibernate.Session;
 import org.hibernate.SessionFactory;
@@ -57,22 +57,23 @@ import org.hibernate.Transaction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.servlet.DispatcherType;
-import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.KeyManagementException;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
-import java.util.EnumSet;
-import java.util.HashMap;
-import java.util.Scanner;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static com.autotune.utils.KruizeConstants.DataSourceConstants.DataSourceErrorMsgs.DATASOURCE_CONNECTION_FAILED;
 import static com.autotune.utils.KruizeConstants.MetadataProfileConstants.MetadataProfileErrorMsgs.SET_UP_DEFAULT_METADATA_PROFILE_ERROR;
 import static com.autotune.utils.KruizeConstants.MetricProfileConstants.MetricProfileErrorMsgs.SET_UP_DEFAULT_METRIC_PROFILE_ERROR;
-import static com.autotune.utils.ServerContext.*;
 
 public class Autotune {
     private static final Logger LOGGER = LoggerFactory.getLogger(Autotune.class);
@@ -91,28 +92,25 @@ public class Autotune {
         disableServerLogging();
         // Create a thread pool with the desired number of threads
         QueuedThreadPool threadPool = new QueuedThreadPool();
-        threadPool.setMaxThreads(KRUIZE_HTTP_THREAD_POOL_COUNT); // Set the maximum number of threads in the pool
+        threadPool.setMaxThreads(ServerContext.KRUIZE_HTTP_THREAD_POOL_COUNT); // Set the maximum number of threads in the pool
         Server server = new Server(threadPool);
         // Create a connector (e.g., HTTP)
         ServerConnector connector = new ServerConnector(server);
-        connector.setPort(KRUIZE_SERVER_PORT);
+        connector.setPort(ServerContext.KRUIZE_SERVER_PORT);
         // Set the connector to the server
         server.addConnector(connector);
 
         context = new ServletContextHandler();
         context.setContextPath(ServerContext.ROOT_CONTEXT);
         context.setErrorHandler(new KruizeErrorHandler());
-        context.addFilter(
-                KruizeCORSFilter.getFilter(),
-                KruizeConstants.CORSConstants.PATH_WILDCARD,
-                EnumSet.of(DispatcherType.REQUEST)
-        );
         /**
          *  Adding Listener to initiate variables during server start.
          */
         InitiateListener contextListener = new InitiateListener();
         context.addEventListener(contextListener);
-        server.setHandler(context);
+        CrossOriginHandler corsHandler = KruizeCORSHandler.getHandler();
+        corsHandler.setHandler(context);
+        server.setHandler(corsHandler);
         server.addBean(new KruizeErrorHandler());
 
 
@@ -122,52 +120,50 @@ public class Autotune {
             CloudWatchAppender.configureLoggerForCloudWatchLog();
             LOGGER.info("Kruize getting started with is_ros_enabled:{} , local:{}", KruizeDeploymentInfo.is_ros_enabled, KruizeDeploymentInfo.local);
             if (KruizeDeploymentInfo.is_ros_enabled) {
-                executeDDLs(AnalyzerConstants.ROS_DDL_SQL);
+                executeDDLs(AnalyzerConstants.RM);
             }
 
             // Read and execute the DDLs here
             if (KruizeDeploymentInfo.local) {
                 LOGGER.debug("Now running kruize local DDL's ");
-                executeDDLs(AnalyzerConstants.KRUIZE_LOCAL_DDL_SQL);
+                executeDDLs(AnalyzerConstants.LM);
                 // load available datasources from db
                 loadDataSourcesFromDB();
 
                 // setting up DataSources
                 try {
                     setUpDataSources();
+                    // checking available DataSources
+                    checkAvailableDataSources();
+                    // load available metric profiles from db
+                    loadMetricProfilesFromDB();
+
+                    if (KruizeDeploymentInfo.is_ros_enabled) {
+                        // setting up metric profile
+                        try {
+                            setUpMetricProfile();
+                        } catch (Exception e) {
+                            LOGGER.error(SET_UP_DEFAULT_METRIC_PROFILE_ERROR, e.getMessage());
+                        }
+                    }
+
+                    // load available metadata profiles from db
+                    loadMetadataProfilesFromDB();
+
+                    if (KruizeDeploymentInfo.is_ros_enabled) {
+                        // setting up metadata profile
+                        try {
+                            setUpMetadataProfile();
+                        } catch (Exception e) {
+                            LOGGER.error(SET_UP_DEFAULT_METADATA_PROFILE_ERROR, e.getMessage());
+                        }
+                    }
+
+                    // start updater service
+                    startAutoscalerService();
                 } catch (Exception e) {
-                    LOGGER.error(DATASOURCE_CONNECTION_FAILED, e.getMessage());
+                    LOGGER.error(DATASOURCE_CONNECTION_FAILED +"{}", e.getMessage());
                 }
-
-                // checking available DataSources
-                checkAvailableDataSources();
-                // load available metric profiles from db
-                loadMetricProfilesFromDB();
-
-                if (KruizeDeploymentInfo.is_ros_enabled) {
-                    // setting up metric profile
-                    try {
-                        setUpMetricProfile();
-                    } catch (Exception e) {
-                        LOGGER.error(SET_UP_DEFAULT_METRIC_PROFILE_ERROR, e.getMessage());
-                    }
-                }
-
-                // load available metadata profiles from db
-                loadMetadataProfilesFromDB();
-
-                if (KruizeDeploymentInfo.is_ros_enabled) {
-                    // setting up metadata profile
-                    try {
-                        setUpMetadataProfile();
-                    } catch (Exception e) {
-                        LOGGER.error(SET_UP_DEFAULT_METADATA_PROFILE_ERROR, e.getMessage());
-                    }
-                }
-
-
-                // start updater service
-                startAutoscalerService();
             }
 
             // close the existing session factory before recreating
@@ -251,11 +247,15 @@ public class Autotune {
         DataSourceCollection dataSourceCollection = DataSourceCollection.getInstance();
         LOGGER.info(KruizeConstants.DataSourceConstants.DataSourceInfoMsgs.CHECKING_AVAILABLE_DATASOURCE);
         HashMap<String, DataSourceInfo> dataSources = dataSourceCollection.getDataSourcesCollection();
-        for (String name : dataSources.keySet()) {
-            DataSourceInfo dataSource = dataSources.get(name);
-            String dataSourceName = dataSource.getName();
-            String url = dataSource.getUrl().toString();
-            LOGGER.info(KruizeConstants.DataSourceConstants.DataSourceSuccessMsgs.DATASOURCE_FOUND + dataSourceName + ", " + url);
+        if (dataSources.isEmpty()) {
+            LOGGER.info(KruizeConstants.DataSourceConstants.DataSourceErrorMsgs.MISSING_DATASOURCE_INFO);
+        } else {
+            for (String name : dataSources.keySet()) {
+                DataSourceInfo dataSource = dataSources.get(name);
+                String dataSourceName = dataSource.getName();
+                String url = dataSource.getUrl().toString();
+                LOGGER.info(KruizeConstants.DataSourceConstants.DataSourceSuccessMsgs.DATASOURCE_FOUND + dataSourceName + ", " + url);
+            }
         }
     }
 
@@ -292,10 +292,12 @@ public class Autotune {
     }
 
     private static void addAutotuneServlets(ServletContextHandler context) {
-        context.addServlet(HealthService.class, HEALTH_SERVICE);
+        context.addServlet(HealthService.class, ServerContext.HEALTH_SERVICE);
         // Start the Prometheus end point (/metrics) for Autotune
-        context.addServlet(new ServletHolder(new MetricsServlet(MetricsConfig.meterRegistry().getPrometheusRegistry())), METRICS_SERVICE);
-        DefaultExports.initialize();
+        JvmMetrics.builder().register();
+        context.addServlet(
+                new ServletHolder(new PrometheusMetricsServlet()),
+                ServerContext.METRICS_SERVICE);
     }
 
     private static void disableServerLogging() {
@@ -314,47 +316,132 @@ public class Autotune {
         ExperimentManager.launch(contextHandler);
     }
 
-    private static void executeDDLs(String ddlFileName) throws Exception {
+    private static void executeDDLs(String ddlPathOrFile) throws Exception {
         SessionFactory factory = KruizeHibernateUtil.getSessionFactory();
         Session session = null;
-        try {
-            session = factory.openSession();
-            Path sqlFilePath = Paths.get(AnalyzerConstants.TARGET, AnalyzerConstants.MIGRATIONS, ddlFileName);
-            File sqlFile = sqlFilePath.toFile();
-            Scanner scanner = new Scanner(sqlFile);
-            Transaction transaction = session.beginTransaction();
 
-            while (scanner.hasNextLine()) {
-                String sqlStatement = scanner.nextLine();
-                if (sqlStatement.startsWith("#") || sqlStatement.startsWith("-")) {
-                    continue;
-                } else {
-                    try {
-                        session.createNativeQuery(sqlStatement).executeUpdate();
-                    } catch (Exception e) {
-                        if (e.getMessage().contains(DBConstants.DB_MESSAGES.ADD_CONSTRAINT)) {
-                            LOGGER.warn("sql: {} failed due to : {}", sqlStatement, DBConstants.DB_MESSAGES.ADD_CONSTRAINT + DBConstants.DB_MESSAGES.DUPLICATE_DB_OPERATION);
-                        } else if (e.getMessage().contains(DBConstants.DB_MESSAGES.ADD_COLUMN)) {
-                            LOGGER.warn("sql: {} failed due to : {}", sqlStatement, DBConstants.DB_MESSAGES.ADD_COLUMN + DBConstants.DB_MESSAGES.DUPLICATE_DB_OPERATION);
-                        } else {
-                            LOGGER.error("sql: {} failed due to : {}", sqlStatement, e.getMessage());
-                        }
-                        transaction.commit();
-                        transaction = session.beginTransaction();
+        // TARGET/MIGRATIONS/<ddlPathOrFile>
+        Path basePath = Paths.get(AnalyzerConstants.TARGET, AnalyzerConstants.MIGRATIONS, ddlPathOrFile);
+
+        try {
+            // Collect single file or all .sql files under directory
+            List<Path> sqlFiles = new ArrayList<>();
+            if (Files.notExists(basePath)) {
+                throw new IllegalArgumentException("DDL path does not exist: " + basePath);
+            }
+
+            if (Files.isRegularFile(basePath)) {
+                sqlFiles.add(basePath);
+            } else if (Files.isDirectory(basePath)) {
+                try (Stream<Path> walk = Files.walk(basePath)) {
+                    sqlFiles = walk
+                            .filter(p -> Files.isRegularFile(p) && p.toString().toLowerCase().endsWith(".sql"))
+                            .collect(Collectors.toList());
+                }
+                // sort files by extracted numeric version if possible, otherwise by filename
+                sqlFiles.sort((p1, p2) -> {
+                    Integer v1 = extractVersion(p1.getFileName().toString());
+                    Integer v2 = extractVersion(p2.getFileName().toString());
+                    if (v1 != null && v2 != null) {
+                        return Integer.compare(v1, v2);
+                    } else if (v1 != null) {
+                        return -1;
+                    } else if (v2 != null) {
+                        return 1;
+                    } else {
+                        return p1.getFileName().toString().compareTo(p2.getFileName().toString());
                     }
+                });
+            } else {
+                throw new IllegalArgumentException("Provided path is not a file or directory: " + basePath);
+            }
+
+            if (sqlFiles.isEmpty()) {
+                LOGGER.info("No SQL files found at path: {}", basePath);
+                return;
+            }
+
+            session = factory.openSession();
+
+            for (Path sqlFilePath : sqlFiles) {
+                LOGGER.debug("Applying SQL file: {}", sqlFilePath.toString());
+                String sqlStatement = Files.readString(sqlFilePath, StandardCharsets.UTF_8);
+                Transaction transaction = session.beginTransaction();
+                String trimmed = sqlStatement.trim();
+                // skip blank and comment-only statements
+                if (trimmed.isEmpty()
+                        || trimmed.startsWith("--")
+                        || trimmed.startsWith("#")
+                        || trimmed.startsWith("/*")) {
+                    continue;
+                }
+
+                try {
+                    session.createNativeQuery(trimmed).executeUpdate();
+                } catch (Exception e) {
+                    String msg = Optional.ofNullable(e.getMessage()).orElse("");
+                    if (msg.contains(DBConstants.DB_MESSAGES.ADD_CONSTRAINT)) {
+                        LOGGER.warn("sql: {} failed due to : {}{}", trimmed, DBConstants.DB_MESSAGES.ADD_CONSTRAINT, DBConstants.DB_MESSAGES.DUPLICATE_DB_OPERATION);
+                    } else if (msg.contains(DBConstants.DB_MESSAGES.ADD_COLUMN)) {
+                        LOGGER.warn("sql: {} failed due to : {}{}", trimmed, DBConstants.DB_MESSAGES.ADD_COLUMN, DBConstants.DB_MESSAGES.DUPLICATE_DB_OPERATION);
+                    } else {
+                        LOGGER.error("sql: {} failed due to : {}", trimmed, msg);
+                    }
+
+                    // Commit current transaction and begin a new one
+                    try {
+                        transaction.commit();
+                    } catch (Exception ignore) {
+                    }
+                    transaction = session.beginTransaction();
+                }
+
+                // commit file-level transaction
+                try {
+                    transaction.commit();
+                } catch (Exception e) {
+                    LOGGER.error("Failed to commit transaction after processing file {}: {}", sqlFilePath, e.getMessage());
                 }
             }
-            transaction.commit();
-            scanner.close();
+
             LOGGER.info(DBConstants.DB_MESSAGES.DB_CREATION_SUCCESS);
         } catch (Exception e) {
-            LOGGER.error("Exception occurred while trying to read the DDL file: {}", e.getMessage());
+            LOGGER.error("Exception occurred while trying to read the DDL(s): {}", e.getMessage());
             throw new Exception(e);
         } finally {
             if (null != session) session.close(); // Close the Hibernate session
         }
 
         LOGGER.info(DBConstants.DB_MESSAGES.DB_LIVELINESS_PROBE_SUCCESS);
+    }
+
+    /**
+     * Extracts the numeric version from a filename.
+     * <p>
+     * The expected filename format is: v{number}__description.sql (case-insensitive).
+     * <p>
+     * Examples:
+     *   "v001__create_kruize_experiments_table.sql"  -> returns 1
+     *   "v100__add_new_table.sql"                   -> returns 100
+     *   "v0003__fix.sql"                            -> returns 3
+     *   "20250923_1200__timestamped.sql"            -> returns null (does not match pattern)
+     *   "create_tables.sql"                         -> returns null (no leading v###__)
+     *
+     * @param filename the migration filename to parse
+     * @return the numeric version as Integer, or null if the filename doesn't match the expected pattern
+     */
+    private static Integer extractVersion(String filename) {
+        if (filename == null) return null;
+        Pattern p = Pattern.compile("^v0*([0-9]+)__.*", Pattern.CASE_INSENSITIVE);
+        Matcher m = p.matcher(filename);
+        if (m.matches()) {
+            try {
+                return Integer.valueOf(m.group(1));
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return null;
     }
 
     // starts the recommendation updater service

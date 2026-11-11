@@ -5,7 +5,7 @@ import com.autotune.utils.KruizeConstants;
 public class AuthenticationStrategyFactory {
 
     public static AuthenticationStrategy createAuthenticationStrategy(AuthenticationConfig authConfig) {
-        AuthType type = authConfig.getType();
+        AuthType type = (authConfig != null && authConfig.getType() != null) ? authConfig.getType() : AuthType.NONE;
         switch (type) {
             case NONE:
                 return new NoAuthStrategy();
@@ -25,6 +25,12 @@ public class AuthenticationStrategyFactory {
                 String clientId = ((OAuth2Credentials) authConfig.getCredentials()).getClientId();
                 String clientSecret = ((OAuth2Credentials) authConfig.getCredentials()).getClientSecret();
                 return new OAuth2AuthenticationStrategy(tokenEndpoint, clientId, clientSecret);
+            case MTLS:
+                String clientCertPath = ((MTLSCredentials) authConfig.getCredentials()).getClientCertPath();
+                String clientKeyPath = ((MTLSCredentials) authConfig.getCredentials()).getClientKeyPath();
+                String caCertPath = ((MTLSCredentials) authConfig.getCredentials()).getCaCertPath();
+                String keyPassword = ((MTLSCredentials) authConfig.getCredentials()).getKeyPassword();
+                return new MTLSAuthenticationStrategy(clientCertPath, clientKeyPath, caCertPath, keyPassword);
             default:
                 throw new IllegalArgumentException(KruizeConstants.AuthenticationConstants.UNKNOWN_AUTHENTICATION+ type);
         }

@@ -19,26 +19,29 @@ import json
 import os
 import sys
 import time
+import pytest
 
 sys.path.append("../../")
 from helpers.kruize import *
 from helpers.utils import *
 from helpers.generate_rm_jsons import *
 
+api_version = "legacy"
 
 def main(argv):
+    global api_version
     cluster_type = "minikube"
     results_dir = "."
     failed = 0
     try:
-        opts, args = getopt.getopt(argv, "h:c:a:u:r:")
+        opts, args = getopt.getopt(argv, "h:c:a:u:r:", ["api-version="])
     except getopt.GetoptError:
-        print("kruize_pod_restart_test.py -c <cluster type> -a <openshift kruize route> -r <results dir>")
+        print("kruize_pod_restart_test.py -c <cluster type> -a <openshift kruize route> -r <results dir> --api-version <v1/legacy>")
         print("Note: -a option is required only on openshift when kruize service is exposed")
         sys.exit(2)
     for opt, arg in opts:
         if opt == '-h':
-            print("kruize_pod_restart_test.py -c <cluster type> -a <openshift kruize route> -r <results dir>")
+            print("kruize_pod_restart_test.py -c <cluster type> -a <openshift kruize route> -r <results dir> --api-version <v1/legacy>")
             sys.exit(0)
         elif opt == '-c':
             cluster_type = arg
@@ -46,7 +49,13 @@ def main(argv):
             server_ip_addr = arg
         elif opt == '-r':
             results_dir = arg
+        elif opt == '--api-version':
+            api_version = str(arg)
 
+    if api_version.lower() == "v1":
+        pytest.USE_NEW_API = True
+    else:
+        pytest.USE_NEW_API = False
     print(f"Cluster type = {cluster_type}")
     print(f"Results dir = {results_dir}")
 
@@ -109,7 +118,7 @@ def main(argv):
     # Fetch listExperiments
     list_exp_json_file_before = list_exp_json_dir + "/list_exp_json_before.json"
     # assign params to be passed in listExp
-    results = "true"
+    results = "false"
     recommendations = "true"
     latest = "false"
     experiment_name = None
@@ -181,7 +190,7 @@ def main(argv):
 
     # Fetch listExperiments
     list_exp_json_file_after = list_exp_json_dir + "/list_exp_json_after.json"
-    results = "true"
+    results = "false"
     recommendations = "true"
     latest = "false"
     experiment_name = None

@@ -17,8 +17,14 @@
 package com.autotune.database.helper;
 
 import com.autotune.analyzer.adapters.DeviceDetailsAdapter;
+import com.autotune.analyzer.adapters.MetricMetadataAdapter;
 import com.autotune.analyzer.adapters.RecommendationItemAdapter;
 import com.autotune.analyzer.exceptions.InvalidConversionOfRecommendationEntryException;
+import com.autotune.analyzer.exceptions.LayerConversionException;
+import com.autotune.analyzer.kruizeLayer.KruizeLayer;
+import com.autotune.analyzer.kruizeLayer.LayerMetadata;
+import com.autotune.analyzer.kruizeLayer.LayerPresence;
+import com.autotune.analyzer.kruizeLayer.Tunable;
 import com.autotune.analyzer.kruizeObject.KruizeObject;
 import com.autotune.analyzer.kruizeObject.SloInfo;
 import com.autotune.analyzer.metadataProfiles.MetadataProfile;
@@ -29,10 +35,12 @@ import com.autotune.analyzer.recommendations.objects.MappedRecommendationForTime
 import com.autotune.analyzer.serviceObjects.*;
 import com.autotune.analyzer.utils.AnalyzerConstants;
 import com.autotune.analyzer.utils.AnalyzerErrorConstants;
+import com.autotune.analyzer.utils.ExperimentTypeUtil;
 import com.autotune.analyzer.utils.GsonUTCDateAdapter;
 import com.autotune.common.auth.AuthenticationConfig;
 import com.autotune.common.data.dataSourceMetadata.*;
 import com.autotune.common.data.metrics.Metric;
+import com.autotune.common.data.metrics.MetricMetadata;
 import com.autotune.common.data.result.ContainerData;
 import com.autotune.common.data.result.ExperimentResultData;
 import com.autotune.common.data.result.NamespaceData;
@@ -43,6 +51,7 @@ import com.autotune.common.datasource.DataSourceMetadataOperator;
 import com.autotune.common.k8sObjects.K8sObject;
 import com.autotune.database.table.*;
 import com.autotune.database.table.lm.KruizeLMExperimentEntry;
+import com.autotune.database.table.lm.KruizeLMLayerEntry;
 import com.autotune.database.table.lm.KruizeLMMetadataProfileEntry;
 import com.autotune.database.table.lm.KruizeLMRecommendationEntry;
 import com.autotune.utils.KruizeConstants;
@@ -70,6 +79,7 @@ import static com.autotune.utils.KruizeConstants.KRUIZE_BULK_API.JOB_ID;
  */
 public class DBHelpers {
     private static final Logger LOGGER = LoggerFactory.getLogger(DBHelpers.class);
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
 
     private DBHelpers() {
@@ -149,7 +159,7 @@ public class DBHelpers {
             }
 
             // Check if Container data map and namespace data both are not empty
-            if (containerDataMap.isEmpty() && null == k8sObject.getNamespaceData()) {
+            if (containerDataMap.isEmpty() && (!k8sObject.getNamespaceDataMap().isEmpty() &&  null == k8sObject.getNamespaceDataMap())) {
                 throw new InvalidConversionOfRecommendationEntryException(
                         String.format(
                                 AnalyzerErrorConstants.ConversionErrors.KruizeRecommendationError.NOT_EMPTY,
@@ -197,7 +207,7 @@ public class DBHelpers {
 
             for (KubernetesAPIObject kubernetesAPIObject : kubernetesAPIObjectList) {
                 // Check for null
-                if (null == kubernetesAPIObject.getContainerAPIObjects() && null == kubernetesAPIObject.getNamespaceAPIObjects()) {
+                if (null == kubernetesAPIObject.getContainerAPIObjects() && null == kubernetesAPIObject.getNamespaceAPIObject()) {
                     throw new InvalidConversionOfRecommendationEntryException(
                             String.format(
                                     AnalyzerErrorConstants.ConversionErrors.KruizeRecommendationError.NOT_NULL,
@@ -206,7 +216,9 @@ public class DBHelpers {
                     );
                 }
                 // Check for empty list
-                if (kubernetesAPIObject.getContainerAPIObjects().isEmpty() && null == kubernetesAPIObject.getNamespaceAPIObjects()) {
+                if (kubernetesAPIObject.getContainerAPIObjects().isEmpty() && (kubernetesAPIObject.getNamespaceAPIObject() == null ||
+                        kubernetesAPIObject.getNamespaceAPIObject().getNamespace() == null ||
+                        kubernetesAPIObject.getNamespaceAPIObject().getNamespace().isEmpty())) {
                     throw new InvalidConversionOfRecommendationEntryException(
                             String.format(
                                     AnalyzerErrorConstants.ConversionErrors.KruizeRecommendationError.NOT_EMPTY,
@@ -217,25 +229,33 @@ public class DBHelpers {
                 for (K8sObject k8sObject : kruizeObject.getKubernetes_objects()) {
                     if (null == kubernetesAPIObject.getName()) {
                         // namespace recommendations experiment type
-                        NamespaceData namespaceData = k8sObject.getNamespaceData();
+                        NamespaceAPIObject namespaceAPIObject =kubernetesAPIObject.getNamespaceAPIObject();
+                        if (null == namespaceAPIObject)
+                            continue;
+
+                        String namespaceName = namespaceAPIObject.getNamespace();
+                        if (!k8sObject.getNamespaceDataMap().containsKey(namespaceName))
+                            continue;
+
+                        NamespaceData namespaceData = k8sObject.getNamespaceDataMap().get(namespaceName);
 
                         // Set namespace recommendations
-                        if (null == kubernetesAPIObject.getNamespaceAPIObjects())
+                        if (null == namespaceAPIObject.getNamespaceRecommendations())
                             continue;
-                        if (null == kubernetesAPIObject.getNamespaceAPIObjects().getnamespaceRecommendations().getData())
+                        if (null == namespaceAPIObject.getNamespaceRecommendations().getData())
                             continue;
                         if (null == namespaceData.getNamespaceRecommendations()) {
-                            namespaceData.setNamespaceRecommendations(Utils.getClone(kubernetesAPIObject.getNamespaceAPIObjects().getnamespaceRecommendations(), NamespaceRecommendations.class));
+                            namespaceData.setNamespaceRecommendations(Utils.getClone(namespaceAPIObject.getNamespaceRecommendations(), NamespaceRecommendations.class));
                         } else {
                             NamespaceRecommendations namespaceRecommendations = namespaceData.getNamespaceRecommendations();
                             namespaceRecommendations.setVersion(listRecommendationsAPIObject.getApiVersion());
                             if (null == namespaceRecommendations.getData()) {
-                                namespaceData.setNamespaceRecommendations(Utils.getClone(kubernetesAPIObject.getNamespaceAPIObjects().getnamespaceRecommendations(), NamespaceRecommendations.class));
+                                namespaceData.setNamespaceRecommendations(Utils.getClone(namespaceAPIObject.getNamespaceRecommendations(), NamespaceRecommendations.class));
                             } else {
                                 namespaceRecommendations.getNotificationMap().clear();
-                                namespaceRecommendations.getNotificationMap().putAll(kubernetesAPIObject.getNamespaceAPIObjects().getnamespaceRecommendations().getNotificationMap());
+                                namespaceRecommendations.getNotificationMap().putAll(namespaceAPIObject.getNamespaceRecommendations().getNotificationMap());
                                 HashMap<Timestamp, MappedRecommendationForTimestamp> data = namespaceRecommendations.getData();
-                                data.putAll(kubernetesAPIObject.getNamespaceAPIObjects().getnamespaceRecommendations().getData());
+                                data.putAll(namespaceAPIObject.getNamespaceRecommendations().getData());
                             }
                         }
                     } else {
@@ -469,6 +489,7 @@ public class DBHelpers {
                         .registerTypeAdapter(Date.class, new GsonUTCDateAdapter())
                         .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
                         .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
+                        .registerTypeAdapter(MetricMetadata.class, new MetricMetadataAdapter())
                         .create();
                 try {
                     kruizeResultsEntry = new KruizeResultsEntry();
@@ -514,6 +535,7 @@ public class DBHelpers {
                         .registerTypeAdapter(Date.class, new GsonUTCDateAdapter())
                         .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
                         .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
+                        .registerTypeAdapter(MetricMetadata.class, new MetricMetadataAdapter())
                         .create();
                 try {
                     ListRecommendationsAPIObject listRecommendationsAPIObject = getListRecommendationAPIObjectForDB(
@@ -525,6 +547,7 @@ public class DBHelpers {
                             .setPrettyPrinting()
                             .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
                             .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
+                            .registerTypeAdapter(MetricMetadata.class, new MetricMetadataAdapter())
                             .create()
                             .toJson(listRecommendationsAPIObject));
                     kruizeRecommendationEntry = new KruizeRecommendationEntry();
@@ -537,7 +560,7 @@ public class DBHelpers {
                     // todo : what happens if two k8 objects or Containers with different timestamp
                     for (KubernetesAPIObject k8sObject : listRecommendationsAPIObject.getKubernetesObjects()) {
                         if (listRecommendationsAPIObject.isNamespaceExperiment()) {
-                            endInterval = k8sObject.getNamespaceAPIObjects().getnamespaceRecommendations().getData().keySet().stream().max(Timestamp::compareTo).get();
+                            endInterval = k8sObject.getNamespaceAPIObject().getNamespaceRecommendations().getData().keySet().stream().max(Timestamp::compareTo).get();
                         } else {
                             for (ContainerAPIObject containerAPIObject : k8sObject.getContainerAPIObjects()) {
                                 endInterval = containerAPIObject.getContainerRecommendations().getData().keySet().stream().max(Timestamp::compareTo).get();
@@ -581,6 +604,7 @@ public class DBHelpers {
                         .registerTypeAdapter(Date.class, new GsonUTCDateAdapter())
                         .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
                         .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
+                        .registerTypeAdapter(MetricMetadata.class, new MetricMetadataAdapter())
                         .create();
                 try {
                     ListRecommendationsAPIObject listRecommendationsAPIObject = getListRecommendationAPIObjectForDB(
@@ -592,6 +616,7 @@ public class DBHelpers {
                             .setPrettyPrinting()
                             .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
                             .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
+                            .registerTypeAdapter(MetricMetadata.class, new MetricMetadataAdapter())
                             .create()
                             .toJson(listRecommendationsAPIObject));
                     kruizeRecommendationEntry = new KruizeLMRecommendationEntry();
@@ -604,7 +629,7 @@ public class DBHelpers {
                     // todo : what happens if two k8 objects or Containers with different timestamp
                     for (KubernetesAPIObject k8sObject : listRecommendationsAPIObject.getKubernetesObjects()) {
                         if (listRecommendationsAPIObject.isNamespaceExperiment()) {
-                            endInterval = k8sObject.getNamespaceAPIObjects().getnamespaceRecommendations().getData().keySet().stream().max(Timestamp::compareTo).get();
+                            endInterval = k8sObject.getNamespaceAPIObject().getNamespaceRecommendations().getData().keySet().stream().max(Timestamp::compareTo).get();
                         } else {
                             for (ContainerAPIObject containerAPIObject : k8sObject.getContainerAPIObjects()) {
                                 endInterval = containerAPIObject.getContainerRecommendations().getData().keySet().stream().max(Timestamp::compareTo).get();
@@ -659,7 +684,7 @@ public class DBHelpers {
                     boolean matchFound = false;
                     if (kruizeObject.isNamespaceExperiment()) {
                         // saving namespace recommendations
-                        NamespaceData clonedNamespaceData = Utils.getClone(k8sObject.getNamespaceData(), NamespaceData.class);
+                        NamespaceData clonedNamespaceData = Utils.getClone(k8sObject.getNamespaceDataMap().get(k8sObject.getNamespace()), NamespaceData.class);
                         if (null == clonedNamespaceData)
                             continue;
                         if (null == clonedNamespaceData.getNamespaceRecommendations())
@@ -782,6 +807,9 @@ public class DBHelpers {
                         CreateExperimentAPIObject apiObj = new Gson().fromJson(extended_data_rawJson, CreateExperimentAPIObject.class);
                         apiObj.setExperiment_id(entry.getExperiment_id());
                         apiObj.setStatus(entry.getStatus());
+                        apiObj.setExperimentType(ExperimentTypeUtil.getExperimentTypeFromBitMask(entry.getExperiment_type()));
+                        apiObj.setCreationDate(entry.getCreation_date());
+                        apiObj.setUpdateDate(entry.getUpdate_date());
                         createExperimentAPIObjects.add(apiObj);
                     } catch (Exception e) {
                         LOGGER.error("Error in converting to apiObj from db object due to : {}", e.getMessage());
@@ -808,6 +836,7 @@ public class DBHelpers {
                         .registerTypeAdapter(Date.class, new GsonUTCDateAdapter())
                         .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
                         .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
+                        .registerTypeAdapter(MetricMetadata.class, new MetricMetadataAdapter())
                         .create();
                 List<UpdateResultsAPIObject> updateResultsAPIObjects = new ArrayList<>();
                 for (KruizeResultsEntry kruizeResultsEntry : kruizeResultsEntries) {
@@ -850,19 +879,41 @@ public class DBHelpers {
                             k8sObject.getType(),
                             k8sObject.getNamespace()
                     );
-                    List<ContainerAPIObject> containerAPIObjects = new ArrayList<>();
-                    for (Map.Entry<String, ContainerData> entry : k8sObject.getContainerDataMap().entrySet()) {
-                        containerAPIObjects.add(new ContainerAPIObject(
-                                entry.getKey(),
-                                entry.getValue().getContainer_image_name(),
-                                entry.getValue().getContainerRecommendations(),
-                                new ArrayList<>(entry.getValue().getMetrics().values())
-                        ));
+                    if (k8sObject.getContainerDataMap() != null && !k8sObject.getContainerDataMap().isEmpty()) {
+                        List<ContainerAPIObject> containerAPIObjects = new ArrayList<>();
+                        for (Map.Entry<String, ContainerData> entry : k8sObject.getContainerDataMap().entrySet()) {
+                            containerAPIObjects.add(new ContainerAPIObject(
+                                    entry.getKey(),
+                                    entry.getValue().getContainer_image_name(),
+                                    entry.getValue().getContainerRecommendations(),
+                                    new ArrayList<>(entry.getValue().getMetrics().values())
+                            ));
+                        }
+                        kubernetesAPIObject.setContainerAPIObjects(containerAPIObjects);
+                    } else if (k8sObject.getNamespaceDataMap() != null && !k8sObject.getNamespaceDataMap().isEmpty()) {
+                        kubernetesAPIObject.setNamespaceAPIObject(getNamespaceAPIObject(k8sObject));
                     }
-                    kubernetesAPIObject.setContainerAPIObjects(containerAPIObjects);
                     kubernetesAPIObjects.add(kubernetesAPIObject);
                 }
                 return kubernetesAPIObjects;
+            }
+
+            /***
+             * Extract the namespaceAPIObject object from the K8sObject object and return
+             *
+             * @param k8sObject Kubernetes Object from which the namespace data is extracted
+             * @return Namespace object containing the namespace details
+             */
+            private static NamespaceAPIObject getNamespaceAPIObject(K8sObject k8sObject) {
+                NamespaceAPIObject namespaceAPIObject = null;
+                for (Map.Entry<String, NamespaceData> entry : k8sObject.getNamespaceDataMap().entrySet()) {
+                    namespaceAPIObject = new NamespaceAPIObject(
+                            entry.getKey(),
+                            entry.getValue().getNamespaceRecommendations(),
+                            new ArrayList<>(entry.getValue().getMetrics().values())
+                    );
+                }
+                return namespaceAPIObject;
             }
 
             public static List<ListRecommendationsAPIObject> convertRecommendationEntryToRecommendationAPIObject(
@@ -879,6 +930,7 @@ public class DBHelpers {
                         .registerTypeAdapter(Date.class, new GsonUTCDateAdapter())
                         .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
                         .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
+                        .registerTypeAdapter(MetricMetadata.class, new MetricMetadataAdapter())
                         .create();
                 List<ListRecommendationsAPIObject> listRecommendationsAPIObjectList = new ArrayList<>();
                 for (KruizeRecommendationEntry kruizeRecommendationEntry : kruizeRecommendationEntryList) {
@@ -947,6 +999,7 @@ public class DBHelpers {
                         .registerTypeAdapter(Date.class, new GsonUTCDateAdapter())
                         .registerTypeAdapter(AnalyzerConstants.RecommendationItem.class, new RecommendationItemAdapter())
                         .registerTypeAdapter(DeviceDetails.class, new DeviceDetailsAdapter())
+                        .registerTypeAdapter(MetricMetadata.class, new MetricMetadataAdapter())
                         .create();
                 List<ListRecommendationsAPIObject> listRecommendationsAPIObjectList = new ArrayList<>();
                 for (KruizeLMRecommendationEntry kruizeRecommendationEntry : kruizeRecommendationEntryList) {
@@ -1131,31 +1184,36 @@ public class DBHelpers {
                 for (KruizeDataSourceEntry kruizeDataSource : kruizeDataSourceList) {
                     try {
                         DataSourceInfo dataSourceInfo;
-                        AuthenticationConfig authConfig = null;
+                        AuthenticationConfig authConfig = AuthenticationConfig.noAuth();
                         JSONObject authJson = null;
                         if (kruizeDataSource.getKruizeAuthenticationEntry() != null) {
                             try {
-                                JsonNode credentialsNode = kruizeDataSource.getKruizeAuthenticationEntry().getCredentials();
                                 String authType = kruizeDataSource.getKruizeAuthenticationEntry().getAuthenticationType();
-                                // Parse the JsonNode credentials into a JSONObject
-                                if (!credentialsNode.toString().equalsIgnoreCase(AnalyzerConstants.NULL)) {
-                                    JSONObject credentialsJson = new JSONObject(credentialsNode.toString());
-                                    authJson = new JSONObject()
-                                            .put(KruizeConstants.AuthenticationConstants.AUTHENTICATION_TYPE, authType)
-                                            .put(KruizeConstants.AuthenticationConstants.AUTHENTICATION_CREDENTIALS, credentialsJson);
+                                if (authType != null && !authType.equalsIgnoreCase(AnalyzerConstants.NONE)) {
+                                    JsonNode credentialsNode = kruizeDataSource.getKruizeAuthenticationEntry().getCredentials();
+                                    // Parse the JsonNode credentials into a JSONObject
+                                    if (credentialsNode != null && !credentialsNode.toString().equalsIgnoreCase(AnalyzerConstants.NULL)) {
+                                        JSONObject credentialsJson = new JSONObject(credentialsNode.toString());
+                                        authJson = new JSONObject()
+                                                .put(KruizeConstants.AuthenticationConstants.AUTHENTICATION_TYPE, authType)
+                                                .put(KruizeConstants.AuthenticationConstants.AUTHENTICATION_CREDENTIALS, credentialsJson);
+                                    }
+                                    authConfig = AuthenticationConfig.createAuthenticationConfigObject(authJson);
                                 }
-                                authConfig = AuthenticationConfig.createAuthenticationConfigObject(authJson);
                             } catch (Exception e) {
-                                e.printStackTrace();
-                                LOGGER.error("GSON failed to convert the DB Json object in convertKruizeDataSourceToDataSourceObject");
+                                LOGGER.error("GSON failed to convert the DB Json object in convertKruizeDataSourceToDataSourceObject", e);
                             }
                         }
-                        if (kruizeDataSource.getServiceName().isEmpty() && null != kruizeDataSource.getUrl()) {
+                        // Get cluster list from database entry
+                        List<String> clusterList = kruizeDataSource.getClusterList();
+                        
+                        String serviceName = kruizeDataSource.getServiceName();
+                        if ((serviceName == null || serviceName.isEmpty()) && null != kruizeDataSource.getUrl()) {
                             dataSourceInfo = new DataSourceInfo(kruizeDataSource.getName(), kruizeDataSource
-                                    .getProvider(), null, null, new URL(kruizeDataSource.getUrl()), authConfig);
+                                    .getProvider(), null, null, new URL(kruizeDataSource.getUrl()), authConfig, clusterList);
                         } else {
                             dataSourceInfo = new DataSourceInfo(kruizeDataSource.getName(), kruizeDataSource
-                                    .getProvider(), kruizeDataSource.getServiceName(), kruizeDataSource.getNamespace(), null, authConfig);
+                                    .getProvider(), kruizeDataSource.getServiceName(), kruizeDataSource.getNamespace(), null, authConfig, clusterList);
                         }
                         dataSourceInfoList.add(dataSourceInfo);
                     } catch (Exception e) {
@@ -1186,7 +1244,15 @@ public class DBHelpers {
                     kruizeDataSource.setProvider(dataSourceInfo.getProvider());
                     kruizeDataSource.setServiceName(dataSourceInfo.getServiceName());
                     kruizeDataSource.setNamespace(dataSourceInfo.getNamespace());
-                    kruizeDataSource.setUrl(dataSourceInfo.getUrl().toString());
+                    // Only set URL if it's not null (service-based datasources have null URL)
+                    if (dataSourceInfo.getUrl() != null) {
+                        kruizeDataSource.setUrl(dataSourceInfo.getUrl().toString());
+                    }
+                    // Convert List<String> clusters to JsonNode and store as JSONB
+                    List<String> clusterList = dataSourceInfo.getClusters();
+                    if (clusterList != null && !clusterList.isEmpty()) {
+                        kruizeDataSource.setClusters(OBJECT_MAPPER.valueToTree(clusterList));
+                    }
                 } catch (Exception e) {
                     kruizeDataSource = null;
                     LOGGER.error("Error while converting DataSource Object to KruizeDataSource table due to {}", e.getMessage());
@@ -1414,22 +1480,27 @@ public class DBHelpers {
                 KruizeAuthenticationEntry kruizeAuthenticationEntry;
                 try {
                     kruizeAuthenticationEntry = new KruizeAuthenticationEntry();
+                    if (authenticationConfig == null || authenticationConfig.getType() == null) {
+                        LOGGER.error("authenticationConfig or its type is null, skipping auth entry save");
+                        return null;
+                    }
                     kruizeAuthenticationEntry.setAuthenticationType(authenticationConfig.getType().toString());
                     // set the authentication details
-                    String credentialsString = new Gson().toJson(authenticationConfig.getCredentials());
-                    ObjectMapper objectMapper = new ObjectMapper();
-                    JsonNode credentials;
-                    try {
-                        credentials = objectMapper.readTree(credentialsString);
-                    } catch (JsonProcessingException e) {
-                        throw new Exception("Error occurred while creating credentials object : " + e.getMessage());
+                    if (authenticationConfig.getCredentials() != null) {
+                        String credentialsString = new Gson().toJson(authenticationConfig.getCredentials());
+                        ObjectMapper objectMapper = new ObjectMapper();
+                        JsonNode credentials;
+                        try {
+                            credentials = objectMapper.readTree(credentialsString);
+                        } catch (JsonProcessingException e) {
+                            throw new Exception("Error occurred while creating credentials object : " + e.getMessage());
+                        }
+                        kruizeAuthenticationEntry.setCredentials(credentials);
                     }
-                    kruizeAuthenticationEntry.setCredentials(credentials);
                     kruizeAuthenticationEntry.setServiceType(serviceType);
                 } catch (Exception e) {
                     kruizeAuthenticationEntry = null;
-                    LOGGER.error("Error while converting Auth details Object to KruizeAuthentication table : {}", e.getMessage());
-                    e.printStackTrace();
+                    LOGGER.error("Error while converting Auth details Object to KruizeAuthentication table : {}", e.getMessage(), e);
                 }
                 return kruizeAuthenticationEntry;
             }
@@ -1512,7 +1583,150 @@ public class DBHelpers {
                 }
                 return kruizeMetadataProfileEntry;
             }
-        }
 
+            /**
+             * Convert KruizeLayer object to KruizeLMLayerEntry database object
+             *
+             * @param kruizeLayer KruizeLayer object to be converted
+             * @return KruizeLMLayerEntry database entry object
+             */
+            public static KruizeLMLayerEntry convertLayerObjectToLayerDBObj(KruizeLayer kruizeLayer) throws Exception {
+                if (kruizeLayer == null) {
+                    throw new IllegalArgumentException("KruizeLayer cannot be null");
+                }
+
+                try {
+                    KruizeLMLayerEntry kruizeLayerEntry = new KruizeLMLayerEntry();
+                    kruizeLayerEntry.setApi_version(kruizeLayer.getApiVersion());
+                    kruizeLayerEntry.setKind(kruizeLayer.getKind());
+                    kruizeLayerEntry.setLayer_name(kruizeLayer.getLayerName());
+                    kruizeLayerEntry.setDetails(kruizeLayer.getDetails());
+
+                    ObjectMapper objectMapper = new ObjectMapper();
+
+                    // Convert metadata object to JsonNode using ObjectMapper directly
+                    if (kruizeLayer.getMetadata() != null) {
+                        JsonNode metadataNode = objectMapper.valueToTree(kruizeLayer.getMetadata());
+                        kruizeLayerEntry.setMetadata(metadataNode);
+                    }
+
+                    // Convert layer_presence object to JsonNode using ObjectMapper directly
+                    if (kruizeLayer.getLayerPresence() != null) {
+                        JsonNode layerPresenceNode = objectMapper.valueToTree(kruizeLayer.getLayerPresence());
+                        kruizeLayerEntry.setLayer_presence(layerPresenceNode);
+                    }
+
+                    // Convert tunables list to JsonNode using ObjectMapper directly
+                    if (kruizeLayer.getTunables() != null) {
+                        JsonNode tunablesNode = objectMapper.valueToTree(kruizeLayer.getTunables());
+                        kruizeLayerEntry.setTunables(tunablesNode);
+                    }
+
+                    return kruizeLayerEntry;
+                } catch (Exception e) {
+                    LOGGER.error("Failed to convert KruizeLayer to database object: {}", e.getMessage(), e);
+                    throw new Exception("Error converting KruizeLayer to database object: " + e.getMessage(), e);
+                }
+            }
+
+            /**
+             * Convert KruizeLMLayerEntry database object to KruizeLayer object
+             *
+             * @param entry KruizeLMLayerEntry database entry object to be converted
+             * @return KruizeLayer domain object
+             */
+            public static KruizeLayer convertLayerDBObjToLayerObject(KruizeLMLayerEntry entry) throws LayerConversionException {
+                KruizeLayer kruizeLayer = new KruizeLayer();
+                Gson gson = new Gson();
+
+                try {
+                    kruizeLayer.setApiVersion(entry.getApi_version());
+                    kruizeLayer.setKind(entry.getKind());
+                    kruizeLayer.setLayerName(entry.getLayer_name());
+                    kruizeLayer.setDetails(entry.getDetails());
+                } catch (Exception e) {
+                    throw new LayerConversionException(
+                            AnalyzerConstants.LayerConversionSection.BASIC_FIELDS,
+                            AnalyzerErrorConstants.ConversionErrors.LayerConversionError.FAIL_SETTING_BASIC_FIELDS,
+                            e
+                    );
+                }
+
+                // Convert JsonNode to metadata object
+                if (entry.getMetadata() != null) {
+                    try {
+                        String metadataJson = entry.getMetadata().toString();
+                        LayerMetadata metadata = gson.fromJson(metadataJson, LayerMetadata.class);
+                        kruizeLayer.setMetadata(metadata);
+                    } catch (Exception e) {
+                        throw new LayerConversionException(
+                                AnalyzerConstants.LayerConversionSection.METADATA,
+                                AnalyzerErrorConstants.ConversionErrors.LayerConversionError.FAIL_SETTING_LAYER_METADATA,
+                                e
+                        );
+                    }
+                }
+
+                // Convert JsonNode to layer_presence object
+                if (entry.getLayer_presence() != null) {
+                    try {
+                        String layerPresenceJson = entry.getLayer_presence().toString();
+                        LayerPresence layerPresence = gson.fromJson(layerPresenceJson, LayerPresence.class);
+                        kruizeLayer.setLayerPresence(layerPresence);
+                    } catch (Exception e) {
+                        throw new LayerConversionException(
+                                AnalyzerConstants.LayerConversionSection.LAYER_PRESENCE,
+                                AnalyzerErrorConstants.ConversionErrors.LayerConversionError.FAIL_SETTING_LAYER_PRESENCE,
+                                e
+                        );
+                    }
+                }
+
+                // Convert JsonNode to tunables list
+                if (entry.getTunables() != null) {
+                    try {
+                        String tunablesJson = entry.getTunables().toString();
+                        Tunable[] tunablesArray = gson.fromJson(tunablesJson, Tunable[].class);
+                        ArrayList<Tunable> tunablesList = new ArrayList<>(java.util.Arrays.asList(tunablesArray));
+                        kruizeLayer.setTunables(tunablesList);
+                    } catch (Exception e) {
+                        throw new LayerConversionException(
+                                AnalyzerConstants.LayerConversionSection.TUNABLES,
+                                AnalyzerErrorConstants.ConversionErrors.LayerConversionError.FAIL_SETTING_LAYER_TUNABLES,
+                                e
+                        );
+                    }
+                }
+                return kruizeLayer;
+            }
+
+            /**
+             * Converts List of KruizeLMLayerEntry DB objects to List of KruizeLayer objects
+             *
+             * @param kruizeLayerEntryList List of KruizeLMLayerEntry database objects to be converted
+             * @return List of KruizeLayer domain objects
+             * @throws Exception
+             */
+            public static List<KruizeLayer> convertLayerEntryToLayerObject(List<KruizeLMLayerEntry> kruizeLayerEntryList) throws LayerConversionException {
+                List<KruizeLayer> kruizeLayerList = new ArrayList<>();
+
+                // Will throw an exception if any of the layer conversion gets failed
+                // Intentionally not returning partial list of layers which can effect the recommendations
+                for (KruizeLMLayerEntry entry : kruizeLayerEntryList) {
+                    try {
+                        if (null == entry)
+                            continue;
+
+                        KruizeLayer kruizeLayer = convertLayerDBObjToLayerObject(entry);
+                        kruizeLayerList.add(kruizeLayer);
+
+                    } catch (LayerConversionException e) {
+                        LOGGER.error(AnalyzerErrorConstants.ConversionErrors.LayerConversionError.ERROR_LAYER_ENTRY_TO_LAYER_OBJ, e.getMessage());
+                        throw e;
+                    }
+                }
+                return kruizeLayerList;
+            }
+        }
     }
 }

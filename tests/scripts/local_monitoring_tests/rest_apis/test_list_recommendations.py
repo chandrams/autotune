@@ -22,20 +22,10 @@ import sys
 
 sys.path.append("../../")
 
-from helpers.all_terms_list_reco_json_schema import all_terms_list_reco_json_schema
 from helpers.fixtures import *
-from helpers.generate_rm_jsons import *
-from helpers.kruize import *
-from helpers.list_reco_json_local_monitoring_schema import *
-from helpers.medium_and_long_term_list_reco_json_schema import medium_and_long_term_list_reco_json_schema
-from helpers.medium_term_list_reco_json_schema import *
-from helpers.long_term_list_reco_json_schema import *
+from helpers.reco_json_schemas import *
 from helpers.list_reco_json_validate import *
 from helpers.list_metric_profiles_validate import *
-from helpers.list_metric_profiles_without_parameters_schema import *
-from helpers.short_and_long_term_list_reco_json_schema import short_and_long_term_list_reco_json_schema
-from helpers.short_and_medium_term_list_reco_json_schema import short_and_medium_term_list_reco_json_schema
-from helpers.short_term_list_reco_json_schema import short_term_list_reco_json_schema
 from helpers.utils import *
 from jinja2 import Environment, FileSystemLoader
 from helpers.list_metadata_profiles_validate import *
@@ -206,6 +196,7 @@ def test_list_recommendations_namespace_single_result(test_name, expected_status
     print("delete exp = ", response.status_code)
     assert response.status_code == SUCCESS_STATUS_CODE
 
+@pytest.mark.skip(reason="This will be enabled once human eval benchmark setup is included in the run")
 @pytest.mark.sanity
 @pytest.mark.parametrize(
     "test_name, expected_status_code, version, experiment_name, cluster_name, performance_profile, metadata_profile, mode, target_cluster, datasource, experiment_type, kubernetes_obj_type, name, namespace, namespace_name, container_image_name, container_name, measurement_duration, threshold",
@@ -272,7 +263,7 @@ def test_accelerator_recommendation_if_exists(
 
     if json_content[0]["kubernetes_objects"][0]["type"] == "None":
         json_content[0]["kubernetes_objects"][0].pop("type")
-    if json_content[0]["kubernetes_objects"][0]["namespaces"]["namespace_name"] == "None":
+    if json_content[0]["kubernetes_objects"][0]["namespaces"]["namespace"] == "None":
         json_content[0]["kubernetes_objects"][0].pop("namespaces")
     if json_content[0]["kubernetes_objects"][0]["containers"][0]["container_name"] == "None":
         json_content[0]["kubernetes_objects"][0].pop("containers")

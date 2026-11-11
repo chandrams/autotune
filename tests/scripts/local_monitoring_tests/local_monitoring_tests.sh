@@ -15,16 +15,23 @@
 # limitations under the License.
 #
 #
-##### Script to perform basic tests for EM #####
+##### Script to perform tests for Local monitoring #####
 
 
 # Get the absolute path of current directory
-CURRENT_DIR="$(dirname "$(realpath "$0")")"
-LOCAL_MONITORING_TEST_DIR="${CURRENT_DIR}/local_monitoring_tests"
-METRIC_PROFILE_DIR="${LOCAL_MONITORING_TEST_DIR}/../../../manifests/autotune/performance-profiles"
+# Use BASH_SOURCE to get the correct path when script is sourced
+CURRENT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+KRUIZE_REPO="${CURRENT_DIR}/../../.."
+LOCAL_MONITORING_TEST_DIR="${KRUIZE_REPO}/tests/scripts/local_monitoring_tests"
+METRIC_PROFILE_DIR="${KRUIZE_REPO}/manifests/autotune/performance-profiles"
 
 # Source the common functions scripts
-. ${LOCAL_MONITORING_TEST_DIR}/../common/common_functions.sh
+. ${KRUIZE_REPO}/tests/scripts/common/common_functions.sh
+
+# Operator deployment flag (default: disabled, use deploy scripts)
+USE_OPERATOR=0
+KRUIZE_OPERATOR_IMAGE=""
+
 
 # Tests to validate Local monitoring mode in Kruize
 function local_monitoring_tests() {
@@ -43,7 +50,7 @@ function local_monitoring_tests() {
 	target="crc"
 	metric_profile_json="${METRIC_PROFILE_DIR}/resource_optimization_local_monitoring.json"
 
-	local_monitoring_tests=("sanity" "extended" "negative" "test_e2e" "test_e2e_pr_check" "test_bulk_api_ros")
+	local_monitoring_tests=("sanity" "extended" "negative" "test_e2e" "test_e2e_pr_check" "test_bulk_api_ros" "runtimes")
 
 	# check if the test case is supported
 	if [ ! -z "${testcase}" ]; then
@@ -55,27 +62,139 @@ function local_monitoring_tests() {
 	TEST_SUITE_DIR="${RESULTS}/local_monitoring_tests"
 	KRUIZE_SETUP_LOG="${TEST_SUITE_DIR}/kruize_setup.log"
 	KRUIZE_POD_LOG="${TEST_SUITE_DIR}/kruize_pod.log"
+	LOG="${TEST_SUITE_DIR}/benchmark_setup.log"
 
 	mkdir -p ${TEST_SUITE_DIR}
 
-  # check for 'isROSEnabled' flag
-  kruize_local_ros_patch
-  # check for 'servicename' and 'datasource_namespace' input variables
-  kruize_local_datasource_manifest_patch
+	# Install benchmarks
+	if [ ${skip_benchmark_setup} -eq 0 ]; then
+		APP_NAMESPACE="default"
+		BENCHMARKS=("tfb" "sysbench")
+		LOAD_JOBS=("tfb-qrh-load-generator")
+		NS_BENCHMARKS=("ns1" "ns2" "ns3")
 
+		# Clone benchmarks repository if not present
+		if [ ! -d "benchmarks" ]; then
+			echo -n "Pulling required repositories... "
+			clone_repos benchmarks
+			echo "Done!"
+		fi
+
+		# Clean up any existing load jobs
+		echo -n "Cleaning up old load jobs... "
+		for job in "${LOAD_JOBS[@]}"; do
+			kubectl delete job ${job} -n ${APP_NAMESPACE} --ignore-not-found >> "${LOG}" 2>&1
+		done
+		echo "Done!"
+
+		# Install benchmarks in default namespace
+		echo "Installing benchmarks (${BENCHMARKS[*]})..."
+		for bench in "${BENCHMARKS[@]}"; do
+			echo -n "  - Installing ${bench}... "
+			# Use kruize-demos for tfb, default for sysbench
+			if [ "${bench}" == "sysbench" ]; then
+				benchmarks_install ${APP_NAMESPACE} ${bench} "default_manifests" >> "${LOG}" 2>&1
+			else
+				benchmarks_install ${APP_NAMESPACE} ${bench} "kruize-demos" >> "${LOG}" 2>&1
+			fi
+		done
+		echo "All benchmarks installed!"
+
+		echo "Waiting for benchmark Deployments to roll out..."
+		for deploy in tfb-qrh-sample tfb-database sysbench; do
+			echo -n "  - Waiting for ${deploy}... "
+			kubectl rollout status deployment/${deploy} \
+				-n ${APP_NAMESPACE} \
+				--timeout=300s >> "${LOG}" 2>&1 \
+				&& echo "${deploy} Ready!" \
+				|| echo "WARNING: ${deploy} not ready within 300s, continuing anyway"
+		done
+
+		# Apply the Quarkus label and enable monitoring for the runtimes tests.
+		# Must be done here so Prometheus scrapes JVM metrics during the 30-minute wait.
+		quarkus_label="com.redhat.component-name=Quarkus"
+		quarkus_pod_name=$(kubectl get pod -n ${APP_NAMESPACE} --no-headers -o custom-columns=":metadata.name" 2>/dev/null | grep tfb-qrh-sample | head -1)
+		if [ -n "${quarkus_pod_name}" ]; then
+			kubectl label pod "${quarkus_pod_name}" "${quarkus_label}" -n ${APP_NAMESPACE} --overwrite >> "${LOG}" 2>&1
+			echo "Labelled pod ${quarkus_pod_name} with Quarkus label."
+		else
+			echo "WARNING: tfb-qrh pod not found, skipping Quarkus label"
+		fi
+		if [[ ${cluster_type} == "minikube" ]] || [[ ${cluster_type} == "kind" ]]; then
+			echo -n "Enabling kube state metrics labels... "
+			bash "${KRUIZE_REPO}/scripts/enable_kube_state_metrics_labels.sh" >> "${LOG}" 2>&1
+			echo "Done!"
+		fi
+		# For OpenShift, enable user workload monitoring now so the full 30-minute
+		# data collection window counts toward runtimes test metrics.
+		# This must happen before the wait, not at test-loop time.
+		if [[ ${cluster_type} != "minikube" ]] && [[ ${cluster_type} != "kind" ]]; then
+			echo -n "Enabling user workload monitoring (OpenShift)... "
+			bash "${KRUIZE_REPO}/scripts/enable_user_workload_monitoring_openshift.sh" >> "${LOG}" 2>&1
+			echo "Done!"
+		fi
+
+		# Create namespaces and install sysbench for namespace recommendation tests
+		echo "Setting up namespaces for namespace recommendation tests (${NS_BENCHMARKS[*]})..."
+		for ns in "${NS_BENCHMARKS[@]}"; do
+			echo -n "  - Creating namespace ${ns} and installing sysbench... "
+			kubectl create namespace ${ns} --dry-run=client -o yaml | kubectl apply -f - >> "${LOG}" 2>&1
+			benchmarks_install ${ns} "sysbench" "sysbench.yaml" >> "${LOG}" 2>&1
+			echo "Done!"
+		done
+		echo "All namespace benchmarks installed!"
+
+	fi
 	# Setup kruize
 	if [ ${skip_setup} -eq 0 ]; then
-		echo "Setting up kruize..." | tee -a ${LOG}
-		echo "${KRUIZE_SETUP_LOG}"
-		setup "${KRUIZE_POD_LOG}" >> ${KRUIZE_SETUP_LOG} 2>&1
-	        echo "Setting up kruize...Done" | tee -a ${LOG}
+		pushd "${KRUIZE_REPO}" > /dev/null
+			if [ ${USE_OPERATOR} -eq 1 ]; then
+				# Deploy using operator
+				echo "Setting up kruize using operator..." | tee -a ${LOG}
+				echo "${KRUIZE_SETUP_LOG}"
+				deploy_kruize_operator >> ${KRUIZE_SETUP_LOG} 2>&1
+				echo "Setting up kruize using operator...Done" | tee -a ${LOG}
+			else
+				# Deploy using deploy scripts (default behavior)
+				# check for 'isROSEnabled' flag
+				kruize_local_ros_patch
+				# check for 'servicename' and 'datasource_namespace' input variables
+				kruize_local_datasource_manifest_patch
+				# increase cpu/memory resources, PV storage for openshift
+				kruize_local_patch
+				echo "Setting up kruize..." | tee -a ${LOG}
+				echo "${KRUIZE_SETUP_LOG}"
+				setup "${KRUIZE_POD_LOG}" >> ${KRUIZE_SETUP_LOG} 2>&1
+				echo "Setting up kruize...Done" | tee -a ${LOG}
+			fi
 
-		sleep 60
-
+			sleep 60
+		popd > /dev/null
 	else
 		echo "Skipping kruize setup..." | tee -a ${LOG}
 	fi
 
+		# Wait for data to be available for recommendations.
+		# The longest measurement_duration across tests is 15 min, so Kruize
+		# needs at least one full 15-minute scrape window.  30 minutes gives
+		# two full windows plus headroom for Kruize startup and scrape delays.
+		echo "Waiting for metrics data collection..."
+		echo "This will take 30 minutes. Progress updates every 5 minutes..."
+
+		# Sleep in smaller intervals with progress updates to avoid appearing stuck
+		total_sleep=1800
+		interval=300  # 5 minutes
+		elapsed=0
+
+		while [ $elapsed -lt $total_sleep ]; do
+			sleep $interval
+			elapsed=$((elapsed + interval))
+			remaining=$((total_sleep - elapsed))
+			minutes_remaining=$((remaining / 60))
+			echo "Still waiting... approximately $minutes_remaining minutes remaining ($(date))"
+		done
+
+		echo "Data collection period complete! ($(date))"
 	# If testcase is not specified run all tests
 	if [ -z "${testcase}" ]; then
 		testtorun=("${local_monitoring_tests[@]}")
@@ -106,6 +225,7 @@ function local_monitoring_tests() {
 		mkdir ${TEST_DIR}
 		LOG="${TEST_DIR}/${test}.log"
 
+
 		echo ""
 		echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" | tee -a ${LOG}
 		echo "                    Running Test ${test}" | tee -a ${LOG}
@@ -114,6 +234,31 @@ function local_monitoring_tests() {
 		echo " " | tee -a ${LOG}
 		echo "Test description: ${local_monitoring_test_description[$test]}" | tee -a ${LOG}
 		echo " " | tee -a ${LOG}
+
+		if [ "${test}" == "runtimes" ]; then
+			APP_NAMESPACE="default"
+			if [ ! -d "benchmarks" ]; then
+				echo -n "Pulling required repositories... "
+				clone_repos benchmarks
+				echo "Done!"
+			fi
+
+			echo -n "Installing petclinic benchmark for runtimes test... "
+			kubectl delete job petclinic-load-generator -n ${APP_NAMESPACE} --ignore-not-found >> "${LOG}" 2>&1
+			benchmarks_install ${APP_NAMESPACE} "petclinic" "kruize-demos" >> "${LOG}" 2>&1
+			echo "Done!"
+
+			echo "Waiting for petclinic to roll out..."
+			kubectl rollout status deployment/petclinic-sample \
+				-n ${APP_NAMESPACE} \
+				--timeout=300s >> "${LOG}" 2>&1 \
+				&& echo "petclinic-sample Ready!" \
+				|| echo "WARNING: petclinic-sample not ready within 300s, continuing anyway"
+
+			echo "Waiting 15 minutes for petclinic metrics data collection..."
+			sleep 900
+			echo "Petclinic data collection complete! ($(date))"
+		fi
 
 		pushd ${LOCAL_MONITORING_TEST_DIR}/rest_apis > /dev/null
 			echo "pytest -m ${test} --junitxml=${TEST_DIR}/report-${test}.xml --html=${TEST_DIR}/report-${test}.html --cluster_type ${cluster_type}"
@@ -157,4 +302,12 @@ function local_monitoring_tests() {
 
 	# print the testsuite summary
 	testsuitesummary ${FUNCNAME} ${elapsed_time} ${FAILED_CASES}
+
+	# Cleanup benchmarks directory
+	if [ -d "benchmarks" ]; then
+		echo ""
+		echo "Cleaning up benchmarks directory..."
+		rm -rf benchmarks
+		echo "Benchmarks directory removed"
+	fi
 }

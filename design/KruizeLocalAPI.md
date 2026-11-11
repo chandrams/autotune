@@ -8,6 +8,7 @@ Documentation still in progress stay tuned.
 1. [Resource Analysis Terms and Defaults](#resource-analysis-terms-and-defaults)
 
 - [Terms, Duration & Threshold Table](#terms-duration--threshold-table)
+- [Datasource Configuration Guide](#datasource-guide)
 
 2. [API's](#apis)
 - [List Datasources API](#list-datasources-api)
@@ -60,6 +61,21 @@ Documentation still in progress stay tuned.
   - Example Request and Response
   - Invalid Scenarios
 
+- [Update Metadata Profile API](#update-metadata-profile-api)
+  - Introduction
+  - Example Request and Response
+  - Invalid Scenarios
+
+- [Create Layer API](#create-layer-api)
+    - Introduction
+    - Example Request and Response
+    - Invalid Scenarios
+
+- [List Layers API](#list-layers-api)
+    - Introduction
+    - Example Request and Response
+    - Invalid Scenarios
+
 - [Create Experiment API](#create-experiment-api)
     - Introduction
     - Example Request and Response
@@ -74,6 +90,10 @@ Documentation still in progress stay tuned.
     - Introduction
     - Example Request and Response
     - Invalid Scenarios
+
+- [Recommendations API](#recommendations-api)
+    - Introduction
+    - Example Request and Response
 
 <a name="resource-analysis-terms-and-defaults"></a>
 
@@ -135,6 +155,11 @@ or above the 98th percentile, and memory usage is at the 100th percentile.
 |-------------|------------------|---------------------|
 | Cost        | 60 th            | 100 th              |
 | Performance | 98 th            | 100 th              |
+
+
+<a name="datasource-guide"></a>
+
+For detailed information about datasource configuration options, supported authentication methods, and certificate requirements, see the [Kruize Datasource Configuration Guide](./KruizeDatasource.md).
 
 <a name="apis"></a>
 
@@ -2450,7 +2475,7 @@ Returns list of all the metadata profile created with all the metadata queries
         "aggregation_functions": [
           {
             "function": "sum",
-            "query": "sum by (namespace) (avg_over_time(kube_namespace_status_phase{namespace!=\"\" ADDITIONAL_LABEL}[$MEASUREMENT_DURATION_IN_MIN$m]))"
+            "query": "sum by (namespace) (avg_over_time(kube_namespace_status_phase{$NAMESPACE_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]))"
           }
         ]
       },
@@ -2462,7 +2487,19 @@ Returns list of all the metadata profile created with all the metadata queries
         "aggregation_functions": [
           {
             "function": "sum",
-            "query": "sum by (namespace, workload, workload_type) (avg_over_time(namespace_workload_pod:kube_pod_owner:relabel{workload!=\"\" ADDITIONAL_LABEL}[$MEASUREMENT_DURATION_IN_MIN$m]))"
+            "query": "sum by (namespace, workload, workload_type) (avg_over_time(namespace_workload_pod:kube_pod_owner:relabel{$UNSUPPORTED_WORKLOAD_TYPES$ $WORKLOAD_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]))"
+          }
+        ]
+      },
+      {
+        "name": "workloadsWithPodLabelFilter",
+        "datasource": "prometheus",
+        "value_type": "double",
+        "kubernetes_object": "container",
+        "aggregation_functions": [
+          {
+            "function": "sum",
+            "query": "sum by (namespace, workload, workload_type) (max_over_time(kube_pod_labels{$NAMESPACE_FILTERS$ $CONTAINER_FILTERS$ $LABELS$}[$MEASUREMENT_DURATION_IN_MIN$m]) * on (namespace, pod) group_left(workload, workload_type) max_over_time(namespace_workload_pod:kube_pod_owner:relabel{$UNSUPPORTED_WORKLOAD_TYPES$ $WORKLOAD_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]))"
           }
         ]
       },
@@ -2474,7 +2511,7 @@ Returns list of all the metadata profile created with all the metadata queries
         "aggregation_functions": [
           {
             "function": "sum",
-            "query": "sum by (container, image, workload, workload_type, namespace) (avg_over_time(kube_pod_container_info{container!=\"\" ADDITIONAL_LABEL}[$MEASUREMENT_DURATION_IN_MIN$m]) * on (pod, namespace) group_left(workload, workload_type) avg_over_time(namespace_workload_pod:kube_pod_owner:relabel{workload!=\"\" ADDITIONAL_LABEL}[$MEASUREMENT_DURATION_IN_MIN$m]))"
+            "query": "sum by (container, image, workload, workload_type, namespace) (avg_over_time(kube_pod_container_info{$NAMESPACE_FILTERS$ $CONTAINER_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]) * on (pod, namespace) group_left(workload, workload_type) avg_over_time(namespace_workload_pod:kube_pod_owner:relabel{$UNSUPPORTED_WORKLOAD_TYPES$ $WORKLOAD_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]))"
           }
         ]
       }
@@ -2600,6 +2637,564 @@ Example: `curl -H 'Accept: application/json' -X DELETE http://<URL>:<PORT>/delet
 
 <br>
 
+<a name="update-metadata-profile-api"></a>
+
+
+### Update Metadata Profile API
+
+This is quick guide instructions to update metadata profile as follows.
+
+**Request Parameters**
+
+| Parameter | Type   | Required | Description                      |
+|-----------|--------|----------|----------------------------------|
+| name      | string | required | The name of the metadata profile |
+
+
+**Request with name query parameter**
+
+`PUT /updateMetadataProfile`
+
+`curl -H 'Accept: application/json' -X PUT --data 'copy paste below JSON' http://<URL>:<PORT>/updateMetadataProfile?name=cluster-metadata-local-monitoring`
+
+<details>
+
+Updates the specified metadata profile name, provided metadata profile is already created
+
+<summary><b>Example Request</b></summary>
+
+```json
+{
+  "apiVersion": "recommender.com/v1",
+  "kind": "KruizeMetadataProfile",
+  "metadata": {
+    "name": "cluster-metadata-local-monitoring"
+  },
+  "profile_version": 1,
+  "k8s_type": "openshift",
+  "datasource": "prometheus",
+  "query_variables": [
+    {
+      "name": "namespacesForAdditionalLabel",
+      "datasource": "prometheus",
+      "value_type": "double",
+      "kubernetes_object": "container",
+      "aggregation_functions": [
+        {
+          "function": "sum",
+          "query": "sum by (namespace) (avg_over_time(kube_namespace_status_phase{$NAMESPACE_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]))"
+        }
+      ]
+    },
+    {
+      "name": "workloadsForAdditionalLabel",
+      "datasource": "prometheus",
+      "value_type": "double",
+      "kubernetes_object": "container",
+      "aggregation_functions": [
+        {
+          "function": "sum",
+          "query": "sum by (namespace, workload, workload_type) (avg_over_time(namespace_workload_pod:kube_pod_owner:relabel{$UNSUPPORTED_WORKLOAD_TYPES$ $WORKLOAD_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]))"
+        }
+      ]
+    },
+    {
+      "name": "workloadsWithPodLabelFilter",
+      "datasource": "prometheus",
+      "value_type": "double",
+      "kubernetes_object": "container",
+      "aggregation_functions": [
+        {
+          "function": "sum",
+          "query": "sum by (namespace, workload, workload_type) (max_over_time(kube_pod_labels{$NAMESPACE_FILTERS$ $CONTAINER_FILTERS$ $LABELS$}[$MEASUREMENT_DURATION_IN_MIN$m]) * on (namespace, pod) group_left(workload, workload_type) max_over_time(namespace_workload_pod:kube_pod_owner:relabel{$UNSUPPORTED_WORKLOAD_TYPES$ $WORKLOAD_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]))"
+        }
+      ]
+    },
+    {
+      "name": "containersForAdditionalLabel",
+      "datasource": "prometheus",
+      "value_type": "double",
+      "kubernetes_object": "container",
+      "aggregation_functions": [
+        {
+          "function": "sum",
+          "query": "sum by (container, image, workload, workload_type, namespace) (avg_over_time(kube_pod_container_info{$NAMESPACE_FILTERS$ $CONTAINER_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]) * on (pod, namespace) group_left(workload, workload_type) avg_over_time(namespace_workload_pod:kube_pod_owner:relabel{$UNSUPPORTED_WORKLOAD_TYPES$ $WORKLOAD_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]))"
+        }
+      ]
+    }
+  ]
+}
+```
+</details>
+
+<details>
+<summary><b>Example Response</b></summary>
+
+### Example Response
+
+```json
+{
+  "message": "Metadata profile: cluster-metadata-local-monitoring updated successfully. View Metadata Profiles at /listMetadataProfiles",
+  "httpcode": 201,
+  "documentationLink": "",
+  "status": "SUCCESS"
+}
+```
+
+</details>
+
+### Invalid Scenarios:
+
+<details>
+<summary><b>Invalid or Non-existing MetadataProfile name</b></summary>
+
+`name="xyz"`(Can be either invalid or non-existing profile name)
+
+`curl -H 'Accept: application/json' -X PUT http://<URL>:<PORT>/updateMetadataProfile?name=xyz`
+
+```json
+{
+  "message": "Given metadata profile name - xyz either does not exist or is not valid",
+  "httpcode": 400,
+  "documentationLink": "",
+  "status": "ERROR"
+}
+```
+
+</details>
+
+<details>
+<summary><b>Missing query parameter</b></summary>
+
+Supported query parameter is `name`
+
+Example: `curl -H 'Accept: application/json' -X PUT http://<URL>:<PORT>/updateMetadataProfile`
+```json
+{
+  "message": "Missing metadata profile 'name' parameter",
+  "httpcode": 400,
+  "documentationLink": "",
+  "status": "ERROR"
+}
+```
+
+</details>
+
+<details>
+<summary><b>Mismatch in JSON payload and input parameter profile names</b></summary>
+
+Supported query parameter is `name`
+
+Example: `curl -H 'Accept: application/json' -X PUT http://<URL>:<PORT>/updateMetadataProfile?name=cluster-metadata-local-monitoring`
+
+<details>
+
+<summary><b>Example Request with non-existing profile name</b></summary>
+
+```json
+{
+  "apiVersion": "recommender.com/v1",
+  "kind": "KruizeMetadataProfile",
+  "metadata": {
+    "name": "cluster-metadata-local-monitoring1"
+  },
+  "profile_version": 1,
+  "k8s_type": "openshift",
+  "datasource": "prometheus",
+  "query_variables": [
+    {
+      "name": "namespacesForAdditionalLabel",
+      "datasource": "prometheus",
+      "value_type": "double",
+      "kubernetes_object": "container",
+      "aggregation_functions": [
+        {
+          "function": "sum",
+          "query": "sum by (namespace) (avg_over_time(kube_namespace_status_phase{$NAMESPACE_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]))"
+        }
+      ]
+    },
+    {
+      "name": "workloadsForAdditionalLabel",
+      "datasource": "prometheus",
+      "value_type": "double",
+      "kubernetes_object": "container",
+      "aggregation_functions": [
+        {
+          "function": "sum",
+          "query": "sum by (namespace, workload, workload_type) (avg_over_time(namespace_workload_pod:kube_pod_owner:relabel{$UNSUPPORTED_WORKLOAD_TYPES$ $WORKLOAD_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]))"
+        }
+      ]
+    },
+    {
+      "name": "workloadsWithPodLabelFilter",
+      "datasource": "prometheus",
+      "value_type": "double",
+      "kubernetes_object": "container",
+      "aggregation_functions": [
+        {
+          "function": "sum",
+          "query": "sum by (namespace, workload, workload_type) (max_over_time(kube_pod_labels{$NAMESPACE_FILTERS$ $CONTAINER_FILTERS$ $LABELS$}[$MEASUREMENT_DURATION_IN_MIN$m]) * on (namespace, pod) group_left(workload, workload_type) max_over_time(namespace_workload_pod:kube_pod_owner:relabel{$UNSUPPORTED_WORKLOAD_TYPES$ $WORKLOAD_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]))"
+        }
+      ]
+    },
+    {
+      "name": "containersForAdditionalLabel",
+      "datasource": "prometheus",
+      "value_type": "double",
+      "kubernetes_object": "container",
+      "aggregation_functions": [
+        {
+          "function": "sum",
+          "query": "sum by (container, image, workload, workload_type, namespace) (avg_over_time(kube_pod_container_info{$NAMESPACE_FILTERS$ $CONTAINER_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]) * on (pod, namespace) group_left(workload, workload_type) avg_over_time(namespace_workload_pod:kube_pod_owner:relabel{$UNSUPPORTED_WORKLOAD_TYPES$ $WORKLOAD_FILTERS$}[$MEASUREMENT_DURATION_IN_MIN$m]))"
+        }
+      ]
+    }
+  ]
+}
+```
+</details>
+
+```json
+{
+  "message": "MetadataProfile name in URL: cluster-metadata-local-monitoring, does not match name in request body: cluster-metadata-local-monitoring1",
+  "httpcode": 400,
+  "documentationLink": "",
+  "status": "ERROR"
+}
+```
+
+</details>
+
+<br>
+
+<a name="create-layer-api"></a>
+
+### Create Layer API
+
+Creates a new layer configuration that defines tunable parameters and layer presence detection for application optimization.
+Kruize currently supports hotspot, semeur and quarkus layers.
+
+**Request**
+
+`POST /createLayer`
+
+`curl -H 'Accept: application/json' -X POST --data 'copy paste below JSON' http://<URL>:<PORT>/createLayer`
+
+<details>
+
+<summary><b>Example Request</b></summary>
+
+### Example Request
+
+```json
+{
+  "apiVersion": "recommender.com/v1",
+  "kind": "KruizeLayer",
+  "metadata": {
+    "name": "hotspot"
+  },
+  "layer_name": "hotspot",
+  "details": "hotspot tunables",
+  "layer_presence": {
+    "queries": [
+      {
+        "datasource": "prometheus",
+        "query": "jvm_memory_used_bytes{area=\"heap\",id=~\".+Eden.+\"}",
+        "key": "pod"
+      },
+      {
+        "datasource": "prometheus",
+        "query": "jvm_memory_used_bytes{area=\"heap\",id=~\".+Tenured.+\"}",
+        "key": "pod"
+      },
+      {
+        "datasource": "prometheus",
+        "query": "jvm_memory_used_bytes{area=\"heap\",id=~\".+Old.+\"}",
+        "key": "pod"
+      },
+      {
+        "datasource": "prometheus",
+        "query": "jvm_memory_used_bytes{area=\"heap\",id=~\"Eden.+\"}",
+        "key": "pod"
+      },
+      {
+        "datasource": "prometheus",
+        "query": "jvm_memory_used_bytes{area=\"heap\",id=~\"Tenured.+\"}",
+        "key": "pod"
+      },
+      {
+        "datasource": "prometheus",
+        "query": "jvm_memory_used_bytes{area=\"heap\",id=~\"Old.+\"}",
+        "key": "pod"
+      }
+    ]
+  },
+  "tunables": [
+    {
+      "name": "GCPolicy",
+      "description": "Garbage collection policy",
+      "value_type": "categorical",
+      "choices": [
+        "G1GC",
+        "ParallelGC",
+        "SerialGC",
+        "ShenandoahGC",
+        "ZGC"
+      ]
+    },
+    {
+      "name": "MaxRAMPercentage",
+      "description": "Maximum RAM percentage to allocate",
+      "value_type": "integer",
+      "lower_bound": "25",
+      "upper_bound": "90",
+      "step": 1
+    }
+  ]
+}
+```
+
+</details>
+
+**Layer Presence Configuration**
+
+The `layer_presence` object can have one of the following configurations:
+
+- **Always present**: `{"presence": "always"}`
+- **Query-based**: `{"queries": [{"datasource": "prometheus", "query": "..."}]}`
+
+**Note:** Label-based presence detection is not yet supported and will be added in a future release.
+
+**Tunables Configuration**
+
+Each tunable can be either:
+
+- **Bounded (numeric)**: Requires `value_type`, `upper_bound`, `lower_bound`, and `step`
+- **Categorical**: Requires `value_type: "categorical"` and `choices` array
+
+**Response**
+
+<details>
+<summary><b>Example Response</b></summary>
+
+### Example Response
+
+
+```json
+{
+  "message": "Layer : <layer_name> created successfully. View Layers at /listLayers",
+  "httpcode": 201,
+  "documentationLink": "",
+  "status": "SUCCESS"
+}
+```
+
+</details>
+
+**Error Responses**
+
+| HTTP Status Code | Description                                                      |
+|------------------|------------------------------------------------------------------|
+| 400              | Invalid request body: missing required fields                    |
+| 400              | Layer with name 'container-layer' already exists                 |
+| 400              | Invalid bounds: `upper_bound` must be greater than `lower_bound` |
+| 400              | Invalid step: step must be > 0                                   |
+| 400              | Invalid categorical tunable: choices cannot be empty             |
+| 400              | Tunable with value_type 'categorical' cannot have bounds/step    |
+| 400              | Numeric tunable must have bounds and step                        |
+| 500              | Internal Server Error                                            |
+
+---
+
+<a name="list-layers-api"></a>
+
+### List Layers API
+
+Retrieves a list of all configured layers or a specific layer by name.
+
+**Request with layer_name parameter**
+
+`GET /listLayers`
+
+`curl -H 'Accept: application/json' http://<URL>:<PORT>/listLayers?layer_name=<layer_name>`
+
+Returns the layer details of the specified layer
+<br><br>
+
+**Request for all layers**
+
+`GET /listLayers`
+
+`curl -H 'Accept: application/json' http://<URL>:<PORT>/listLayers`
+
+Returns all configured layers
+
+**Response for all layers**
+
+<details>
+<summary><b>Example Response</b></summary>
+
+### Example Response
+
+```json
+[
+  {
+    "apiVersion": "recommender.com/v1",
+    "kind": "KruizeLayer",
+    "metadata": {
+      "name": "hotspot"
+    },
+    "layer_name": "hotspot",
+    "details": "hotspot tunables",
+    "layer_presence": {
+      "queries": [
+        {
+          "datasource": "prometheus",
+          "query": "jvm_memory_used_bytes{area=\"heap\",id=~\".+Eden.+\"}",
+          "key": "pod"
+        },
+        {
+          "datasource": "prometheus",
+          "query": "jvm_memory_used_bytes{area=\"heap\",id=~\".+Tenured.+\"}",
+          "key": "pod"
+        },
+        {
+          "datasource": "prometheus",
+          "query": "jvm_memory_used_bytes{area=\"heap\",id=~\".+Old.+\"}",
+          "key": "pod"
+        },
+        {
+          "datasource": "prometheus",
+          "query": "jvm_memory_used_bytes{area=\"heap\",id=~\"Eden.+\"}",
+          "key": "pod"
+        },
+        {
+          "datasource": "prometheus",
+          "query": "jvm_memory_used_bytes{area=\"heap\",id=~\"Tenured.+\"}",
+          "key": "pod"
+        },
+        {
+          "datasource": "prometheus",
+          "query": "jvm_memory_used_bytes{area=\"heap\",id=~\"Old.+\"}",
+          "key": "pod"
+        }
+      ]
+    },
+    "tunables": [
+      {
+        "name": "GCPolicy",
+        "description": "Garbage collection policy",
+        "value_type": "categorical",
+        "choices": [
+          "G1GC",
+          "ParallelGC",
+          "SerialGC",
+          "ShenandoahGC",
+          "ZGC"
+        ]
+      },
+      {
+        "name": "MaxRAMPercentage",
+        "description": "Maximum RAM percentage to allocate",
+        "value_type": "integer",
+        "lower_bound": "25",
+        "upper_bound": "90",
+        "step": 1
+      }
+    ]
+  }
+]
+```
+
+</details>
+
+**Response for layer_name - `hotspot`**
+
+<details>
+<summary><b>Example Response</b></summary>
+
+### Example Response
+
+```json
+[
+  {
+    "apiVersion": "recommender.com/v1",
+    "kind": "KruizeLayer",
+    "metadata": {
+      "name": "hotspot"
+    },
+    "layer_name": "hotspot",
+    "details": "hotspot tunables",
+    "layer_presence": {
+      "queries": [
+        {
+          "datasource": "prometheus",
+          "query": "jvm_memory_used_bytes{area=\"heap\",id=~\".+Eden.+\"}",
+          "key": "pod"
+        },
+        {
+          "datasource": "prometheus",
+          "query": "jvm_memory_used_bytes{area=\"heap\",id=~\".+Tenured.+\"}",
+          "key": "pod"
+        },
+        {
+          "datasource": "prometheus",
+          "query": "jvm_memory_used_bytes{area=\"heap\",id=~\".+Old.+\"}",
+          "key": "pod"
+        },
+        {
+          "datasource": "prometheus",
+          "query": "jvm_memory_used_bytes{area=\"heap\",id=~\"Eden.+\"}",
+          "key": "pod"
+        },
+        {
+          "datasource": "prometheus",
+          "query": "jvm_memory_used_bytes{area=\"heap\",id=~\"Tenured.+\"}",
+          "key": "pod"
+        },
+        {
+          "datasource": "prometheus",
+          "query": "jvm_memory_used_bytes{area=\"heap\",id=~\"Old.+\"}",
+          "key": "pod"
+        }
+      ]
+    },
+    "tunables": [
+      {
+        "name": "GCPolicy",
+        "description": "Garbage collection policy",
+        "value_type": "categorical",
+        "choices": [
+          "G1GC",
+          "ParallelGC",
+          "SerialGC",
+          "ShenandoahGC",
+          "ZGC"
+        ]
+      },
+      {
+        "name": "MaxRAMPercentage",
+        "description": "Maximum RAM percentage to allocate",
+        "value_type": "integer",
+        "lower_bound": "25",
+        "upper_bound": "90",
+        "step": 1
+      }
+    ]
+  }
+]
+```
+
+</details>
+
+**Error Responses**
+
+| HTTP Status Code | Description                                    |
+|------------------|------------------------------------------------|
+| 404              | Layer with name 'xyz' not found                |
+| 500              | Internal Server Error                          |
+
 <a name="create-experiment-api"></a>
 
 ### Create Experiment API
@@ -2685,7 +3280,7 @@ If no experiment type is specified, it will default to `container`.
   "kubernetes_objects": [
     {
         "namespaces": {
-            "namespace_name": "test-multiple-import"
+            "namespace": "test-multiple-import"
       }
     }
   ],
@@ -2745,13 +3340,42 @@ If no experiment type is specified, it will default to `container`.
 
 **Request with `model_settings` and `term_settings` field**
 
-Under `recommendation_settings`, the `model_settings` and `term_settings` fields are optional 
-but can be used to specify model and term details. Currently, for monitoring mode user can set
-model as cost and/or performance and terms can be set to short, medium and/or long term.
-By default, it provides recommendations for all three terms and both models.
+Kruize provides both cost and performance recommendations by default,
+but users often have specific optimization goals. For example, if you're only focused on performance, 
+showing cost-related suggestions can lead to confusion and clutter.
 
-If mode is set to auto or recreate then there can only be one term and one model chosen.
-By default, model will be `performance` and term will be set to `short` term.
+So to streamline the user experience, you can now customize the recommendation_settings in your YAML to specify:
+- Models: performance, cost, or a custom model using CPU, memory, and GPU percentiles
+- Terms: short_term, medium_term, or long_term
+
+In monitoring mode, multiple models and terms are supported. By default, it provides recommendations for both models across all three terms.
+In auto or recreate mode, only one model and one term can be set—defaulting to performance and short_term if omitted.
+
+#### How to specify your Custom Model
+
+Under model_settings:
+
+- "models": ["balance"] defines the name of your custom model. This list can have multiple model names as well.
+- "model_tunables" specifies how the model behaves.  For instance, in this example, recommendations will be generated based on the 92nd percentile for CPU, 89th percentile for Memory and the 100th percentile for Accelerators.
+
+```json
+"recommendation_settings": {
+  "threshold": "0.1",
+  "model_settings": {
+    "models": ["balance"],
+    "model_tunables": {
+      "balance": {
+        "memory_percentile": 89,
+        "cpu_percentile": 92,
+        "accelerator_percentile": 100
+      }
+    }
+  },
+  "term_settings": {
+    "terms": ["short"]
+  }
+}
+```
 
 <details>
   <summary><b>Example Request with custom model_settings and term_settings </b></summary>
@@ -2791,7 +3415,13 @@ By default, model will be `performance` and term will be set to `short` term.
     "recommendation_settings": {
       "threshold": "0.1",
       "model_settings": {
-        "models": ["cost"]
+        "models": ["balance"],
+        "model_tunables": {
+          "balance":{
+            "memory_percentile": 89,
+            "cpu_percentile": 92,
+            "accelerator_percentile": 100
+          }
       },
       "term_settings": {
         "terms": ["short"]
@@ -3531,6 +4161,7 @@ The response will contain a array of JSON object with the recommendations for th
                   },
                   "monitoring_end_time": "2023-04-02T13:30:00.680Z",
                   "current": {
+                    "replicas": 7,
                     "limits": {
                       "memory": {
                         "amount": 1.048576E8,
@@ -3568,6 +4199,13 @@ The response will contain a array of JSON object with the recommendations for th
                         }
                       },
                       "monitoring_start_time": "2023-04-01T12:00:00.000Z",
+                      "metrics_info": {
+                        "pod_count": {
+                          "avg": 7,
+                          "min": 7,
+                          "max": 7
+                        }
+                      },
                       "recommendation_engines": {
                         "cost": {
                           "pods_count": 7,
@@ -3774,6 +4412,7 @@ When `interval_end_time` is not specified, Kruize will determine the latest time
                   },
                   "monitoring_end_time": "2023-04-02T13:30:00.680Z",
                   "current": {
+                    "replicas": 7,
                     "limits": {
                       "memory": {
                         "amount": 1.048576E8,
@@ -3811,6 +4450,13 @@ When `interval_end_time` is not specified, Kruize will determine the latest time
                         }
                       },
                       "monitoring_start_time": "2023-04-01T12:00:00.000Z",
+                      "metrics_info": {
+                        "pod_count": {
+                          "avg": 7,
+                          "min": 7,
+                          "max": 7
+                        }
+                      },
                       "recommendation_engines": {
                         "cost": {
                           "pods_count": 7,
@@ -3963,6 +4609,306 @@ When `interval_end_time` is not specified, Kruize will determine the latest time
 
 </details>
 
+**Response for Experiment with Runtime Recommendations**
+
+When the experiment includes runtime workloads (e.g., Hotspot, Semeru, Quarkus) with corresponding layers(See [Layers](./KruizeLayers.md) for more info), the Generate Recommendations API returns **runtime recommendations** . It will be in addition to CPU and memory recommendations. 
+
+Runtime recommendations include:
+
+- **`config.env`**: A new `ENV` object along with requests and limits under the `config` object. It contains variables (`JDK_JAVA_OPTIONS`, `JAVA_OPTIONS`) with JVM flags such as GC policy (e.g., `-XX:+UseG1GC`, `-Xgcpolicy:gencon`) and `MaxRAMPercentage`
+
+The `config` object under each recommendation engine (`cost`, `performance`) will contain an `env` array when runtime recommendations are present.
+
+<details>
+<summary><b>Example Response Body (with Runtime Recommendations)</b></summary>
+
+```json
+[
+  {
+    "cluster_name": "default",
+    "experiment_type": "container",
+    "kubernetes_objects": [
+      {
+        "type": "deployment",
+        "name": "tfb-qrh-sample",
+        "namespace": "default",
+        "containers": [
+          {
+            "container_image_name": "kruize/tfb-qrh:1.13.2.F_et17",
+            "container_name": "tfb-server",
+            "recommendations": {
+              "version": "1.0",
+              "notifications": {
+                "111000": {
+                  "type": "info",
+                  "message": "Recommendations Are Available",
+                  "code": 111000
+                }
+              },
+              "data": {
+                "2024-02-12T10:00:00.000Z": {
+                  "notifications": {
+                    "111101": {
+                      "type": "info",
+                      "message": "Short Term Recommendations Available",
+                      "code": 111101
+                    }
+                  },
+                  "monitoring_end_time": "2024-02-12T10:00:00.000Z",
+                  "current": {},
+                  "recommendation_terms": {
+                    "short_term": {
+                      "duration_in_hours": 24.0,
+                      "notifications": {
+                        "112101": {
+                          "type": "info",
+                          "message": "Cost Recommendations Available",
+                          "code": 112101
+                        },
+                        "112102": {
+                          "type": "info",
+                          "message": "Performance Recommendations Available",
+                          "code": 112102
+                        }
+                      },
+                      "monitoring_start_time": "2024-02-11T10:00:00.000Z",
+                      "recommendation_engines": {
+                        "cost": {
+                          "pods_count": 2,
+                          "confidence_level": 0.0,
+                          "config": {
+                            "requests": {
+                              "cpu": {
+                                "amount": 0.006552455871066771,
+                                "format": "cores"
+                              },
+                              "memory": {
+                                "amount": 5.357027328E8,
+                                "format": "bytes"
+                              }
+                            },
+                            "limits": {
+                              "cpu": {
+                                "amount": 0.006552455871066771,
+                                "format": "cores"
+                              },
+                              "memory": {
+                                "amount": 5.357027328E8,
+                                "format": "bytes"
+                              }
+                            },
+                            "env": [
+                              {
+                                "name": "JDK_JAVA_OPTIONS",
+                                "value": "-XX:MaxRAMPercentage=80 -XX:+UseSerialGC "
+                              },
+                              {
+                                "name": "JAVA_OPTIONS",
+                                "value": "-XX:MaxRAMPercentage=80 -XX:+UseSerialGC "
+                              },
+                              {
+                                "name": "QUARKUS_THREAD_POOL_CORE_THREADS",
+                                "value": "1"
+                              }
+                            ]
+                          },
+                          "variation": {
+                            "limits": {
+                              "cpu": { 
+                                "amount": 0.006552455871066771, 
+                                "format": "cores"
+                              },
+                              "memory": { 
+                                "amount": 5.357027328E8, 
+                                "format": "bytes"
+                              }
+                            },
+                            "requests": {
+                              "cpu": { 
+                                "amount": 0.006552455871066771, 
+                                "format": "cores"
+                              },
+                              "memory": { 
+                                "amount": 5.357027328E8, 
+                                "format": "bytes"
+                              }
+                            }
+                          },
+                          "notifications": {
+                            "112104": {
+                              "type": "info",
+                              "message": "Runtimes Recommendations Available",
+                              "code": 112104
+                            }
+                          }
+                        },
+                        "performance": {
+                          "pods_count": 2,
+                          "confidence_level": 0.0,
+                          "config": {
+                            "requests": {
+                              "cpu": { 
+                                "amount": 0.006552455871066771, 
+                                "format": "cores"
+                              },
+                              "memory": { 
+                                "amount": 5.357027328E8, 
+                                "format": "bytes"
+                              }
+                            },
+                            "limits": {
+                              "cpu": { 
+                                "amount": 0.006552455871066771, 
+                                "format": "cores"
+                              },
+                              "memory": { 
+                                "amount": 5.357027328E8, 
+                                "format": "bytes"
+                              }
+                            },
+                            "env": [
+                              {
+                                "name": "JDK_JAVA_OPTIONS",
+                                "value": "-XX:MaxRAMPercentage=80 -XX:+UseSerialGC "
+                              },
+                              {
+                                "name": "JAVA_OPTIONS",
+                                "value": "-XX:MaxRAMPercentage=80 -XX:+UseSerialGC "
+                              },
+                              {
+                                "name": "QUARKUS_THREAD_POOL_CORE_THREADS",
+                                "value": "1"
+                              }
+                            ]
+                          },
+                          "variation": {
+                            "requests": {
+                              "cpu": {
+                                "amount": 0.01218671898581346,
+                                "format": "cores"
+                              },
+                              "memory": {
+                                "amount": 4.825151488E8,
+                                "format": "bytes"
+                              }
+                            },
+                            "limits": {
+                              "cpu": {
+                                "amount": 0.01218671898581346,
+                                "format": "cores"
+                              },
+                              "memory": {
+                                "amount": 4.825151488E8,
+                                "format": "bytes"
+                              }
+                            }
+                          },
+                          "notifications": {
+                            "112104": {
+                              "type": "info",
+                              "message": "Runtimes Recommendations Available",
+                              "code": 112104
+                            }
+                          }
+                        }
+                      },
+                      "plots": {
+                        "datapoints": 4,
+                        "plots_data": {
+                          "2026-02-24T15:13:47.000Z": {
+                            "cpuUsage": {
+                              "min": 5.237605665981167E-4,
+                              "q1": 0.0010168820497497148,
+                              "median": 0.0012949188382361935,
+                              "q3": 0.00162048430493273,
+                              "max": 0.010684760240729944,
+                              "format": "cores"
+                            },
+                            "memoryUsage": {
+                              "min": 3.992576E8,
+                              "q1": 4.0384512E8,
+                              "median": 4.06585344E8,
+                              "q3": 4.07810048E8,
+                              "max": 4.08137728E8,
+                              "format": "bytes"
+                            }
+                          },
+                          "2026-02-24T21:13:47.000Z": {
+                            "cpuUsage": {
+                              "min": 5.146446544296039E-4,
+                              "q1": 6.941205138022867E-4,
+                              "median": 9.647044529493487E-4,
+                              "q3": 0.0010567015762191925,
+                              "max": 0.0012004138338751692,
+                              "format": "cores"
+                            },
+                            "memoryUsage": {
+                              "min": 4.07990272E8,
+                              "q1": 4.0814592E8,
+                              "median": 4.08162304E8,
+                              "q3": 4.08211456E8,
+                              "max": 4.0835072E8,
+                              "format": "bytes"
+                            }
+                          },
+                          "2026-02-25T09:13:47.000Z": {
+                            "cpuUsage": {
+                              "min": 6.2707478466602E-4,
+                              "q1": 0.0019500985486472174,
+                              "median": 0.005781846524093427,
+                              "q3": 0.007923854401420485,
+                              "max": 0.01218671898581346,
+                              "format": "cores"
+                            },
+                            "memoryUsage": {
+                              "min": 1.78597888E8,
+                              "q1": 2.5858048E8,
+                              "median": 3.31743232E8,
+                              "q3": 3.9942144E8,
+                              "max": 4.10128384E8,
+                              "format": "bytes"
+                            }
+                          },
+                          "2026-02-25T03:13:47.000Z": {}
+                        }
+                      }
+                    },
+                    "medium_term": {
+                      "duration_in_hours": 168.0,
+                      "notifications": {
+                        "120001": {
+                          "type": "info",
+                          "message": "There is not enough data available to generate a recommendation.",
+                          "code": 120001
+                        }
+                      }
+                    },
+                    "long_term": {
+                      "duration_in_hours": 360.0,
+                      "notifications": {
+                        "120001": {
+                          "type": "info",
+                          "message": "There is not enough data available to generate a recommendation.",
+                          "code": 120001
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "version": "v2.0",
+    "experiment_name": "monitor_tfb_benchmark"
+  }
+]
+```
+
+</details>
+
 **Request for `namespace` experiment**
 
 `POST /generateRecommendations?experiment_name=?`
@@ -3993,7 +4939,7 @@ When `interval_end_time` is not specified, Kruize will determine the latest time
         "namespace": "default",
         "containers": [],
         "namespaces": {
-          "namespace_name": "default",
+          "namespace": "default",
           "recommendations": {
             "version": "1.0",
             "notifications": {
@@ -4176,5 +5122,515 @@ When `interval_end_time` is not specified, Kruize will determine the latest time
 | 400              | No metrics available from `2024-01-15T00:00:00.000Z` to `2023-12-31T00:00:00.000Z`.                |
 | 400              | The gap between the interval_start_time and interval_end_time must be within a maximum of 15 days! |
 | 400              | The Start time should precede the End time!                                                        |                                           |
+| 500              | Internal Server Error                                                                              |
+
+<a name="recommendations-api"></a>
+
+### Recommendations API
+
+This is a new API endpoint introduced in the v0.11 release, which is in all respects similar to the existing `/generateRecommendations` API in local mode. The only difference is in the response: `requests` and `limits` are nested under `resources`, similar to the Kubernetes deployment spec. Other than this, the rest remains exactly the same as the other existing recommendation API endpoints.
+<hr>
+**Request**
+
+`POST /kruize/api/v1/recommendations?experiment_name=&interval_end_time=`
+`POST /kruize/api/v1/recommendations?experiment_name=&interval_end_time=&interval_start_time=`
+
+example
+`curl --location --request POST 'http://<URL>:<PORT>/kruize/api/v1/recommendations?interval_end_time=2023-01-02T00:15:00.000Z&experiment_name=temp_1'`
+
+success status code : 201
+**Response**
+The response will contain an array of JSON object with the new recommendations generated for the specified experiment.
+
+<details>
+<summary><b>Example Response Body with experiment_type as `container` </b></summary>
+
+```json
+[
+  {
+    "cluster_name": "cluster-one-division-bell",
+    "kubernetes_objects": [
+      {
+        "type": "deployment",
+        "name": "tfb-qrh-deployment_5",
+        "namespace": "default_5",
+        "containers": [
+          {
+            "container_image_name": "kruize/tfb-qrh:1.13.2.F_et17",
+            "container_name": "tfb-server-1",
+            "recommendations": {
+              "version": "1.0",
+              "notifications": {
+                "111000": {
+                  "type": "info",
+                  "message": "Recommendations Are Available",
+                  "code": 111000
+                }
+              },
+              "data": {
+                "2023-04-02T13:30:00.680Z": {
+                  "notifications": {
+                    "111101": {
+                      "type": "info",
+                      "message": "Short Term Recommendations Available",
+                      "code": 111101
+                    }
+                  },
+                  "monitoring_end_time": "2023-04-02T13:30:00.680Z",
+                  "current": {
+                    "replicas": 7,
+                    "resources": {
+                      "limits": {
+                        "memory": {
+                          "amount": 100.0,
+                          "format": "MiB"
+                        },
+                        "cpu": {
+                          "amount": 0.5,
+                          "format": "cores"
+                        }
+                      },
+                      "requests": {
+                        "memory": {
+                          "amount": 50.21,
+                          "format": "MiB"
+                        },
+                        "cpu": {
+                          "amount": 5.37,
+                          "format": "cores"
+                        }
+                      }
+                    }
+                  },
+                  "recommendation_terms": {
+                    "short_term": {
+                      "duration_in_hours": 24.0,
+                      "notifications": {
+                        "112101": {
+                          "type": "info",
+                          "message": "Cost Recommendations Available",
+                          "code": 112101
+                        },
+                        "112102": {
+                          "type": "info",
+                          "message": "Performance Recommendations Available",
+                          "code": 112102
+                        }
+                      },
+                      "monitoring_start_time": "2023-04-01T12:00:00.000Z",
+                      "metrics_info": {
+                        "pod_count": {
+                          "avg": 7,
+                          "min": 7,
+                          "max": 7
+                        }
+                      },
+                      "recommendation_engines": {
+                        "cost": {
+                          "pods_count": 7,
+                          "confidence_level": 0.0,
+                          "config": {
+                            "resources": {
+                              "limits": {
+                                "memory": {
+                                  "amount": 238.2,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": 0.9299999999999999,
+                                  "format": "cores"
+                                }
+                              },
+                              "requests": {
+                                "memory": {
+                                  "amount": 238.2,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": 0.9299999999999999,
+                                  "format": "cores"
+                                }
+                              }
+                            }
+                          },
+                          "variation": {
+                            "resources": {
+                              "limits": {
+                                "memory": {
+                                  "amount": 138.2,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": -4.44,
+                                  "format": "cores"
+                                }
+                              },
+                              "requests": {
+                                "memory": {
+                                  "amount": 187.98999999999998,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": -4.44,
+                                  "format": "cores"
+                                }
+                              }
+                            }
+                          },
+                          "notifications": {}
+                        },
+                        "performance": {
+                          "pods_count": 27,
+                          "confidence_level": 0.0,
+                          "config": {
+                            "resources": {
+                              "limits": {
+                                "memory": {
+                                  "amount": 238.2,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": 0.9299999999999999,
+                                  "format": "cores"
+                                }
+                              },
+                              "requests": {
+                                "memory": {
+                                  "amount": 238.2,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": 0.9299999999999999,
+                                  "format": "cores"
+                                }
+                              }
+                            }
+                          },
+                          "variation": {
+                            "resources": {
+                              "limits": {
+                                "memory": {
+                                  "amount": 138.2,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": -4.44,
+                                  "format": "cores"
+                                }
+                              },
+                              "requests": {
+                                "memory": {
+                                  "amount": 187.98999999999998,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": -4.44,
+                                  "format": "cores"
+                                }
+                              }
+                            }
+                          },
+                          "notifications": {}
+                        }
+                      }
+                    },
+                    "medium_term": {
+                      "duration_in_hours": 33.8,
+                      "notifications": {
+                        "120001": {
+                          "type": "info",
+                          "message": "There is not enough data available to generate a recommendation.",
+                          "code": 120001
+                        }
+                      }
+                    },
+                    "long_term": {
+                      "duration_in_hours": 33.8,
+                      "notifications": {
+                        "120001": {
+                          "type": "info",
+                          "message": "There is not enough data available to generate a recommendation.",
+                          "code": 120001
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "container_image_name": "kruize/tfb-db:1.15",
+            "container_name": "tfb-server-0",
+            "recommendations": {
+              "version": "1.0",
+              "notifications": {
+                "120001": {
+                  "type": "info",
+                  "message": "There is not enough data available to generate a recommendation.",
+                  "code": 120001
+                }
+              },
+              "data": {}
+            }
+          }
+        ]
+      }
+    ],
+    "version": "v2.0",
+    "experiment_name": "temp_1"
+  }
+]
+```
+
+</details>
+
+<hr>
+`GET /kruize/api/v1/recommendations?experiment_name=&monitoring_end_time=&latest=`
+
+example
+`curl -H 'Accept: application/json' 'http://<URL>:<PORT>/kruize/api/v1/recommendations'`
+`curl -H 'Accept: application/json' 'http://<URL>:<PORT>/kruize/api/v1/recommendations?experiment_name=temp_1'`
+`curl -H 'Accept: application/json' 'http://<URL>:<PORT>/kruize/api/v1/recommendations?experiment_name=temp_1&latest=true'`
+success status code : 200
+
+**Response**
+<details>
+<summary><b>Example Response with experiment_type as `container` </b></summary>
+
+### Example Response
+
+```json
+[
+  {
+    "experiment_name": "experiment_1",
+    "cluster_name": "cluster-one-division-bell",
+    "kubernetes_objects": [
+      {
+        "type": "deployment",
+        "name": "tfb-qrh-deployment_0",
+        "namespace": "default_0",
+        "containers": [
+          {
+            "container_image_name": "kruize/tfb-qrh:1.13.2.F_et17",
+            "container_name": "tfb-server-1",
+            "recommendations": {
+              "version": "v2.0",
+              "notifications": {
+                "111000": {
+                  "type": "info",
+                  "message": "Recommendations Are Available",
+                  "code": 111000
+                }
+              },
+              "data": {
+                "2023-04-02T13:30:00.680Z": {
+                  "notifications": {
+                    "111101": {
+                      "type": "info",
+                      "message": "Short Term Recommendations Available",
+                      "code": 111101
+                    }
+                  },
+                  "monitoring_end_time": "2023-04-02T13:30:00.680Z",
+                  "current": {
+                    "replicas": 27,
+                    "resources": {
+                      "requests": {
+                        "memory": {
+                          "amount": 50.21,
+                          "format": "MiB"
+                        },
+                        "cpu": {
+                          "amount": 5.37,
+                          "format": "cores"
+                        }
+                      },
+                      "limits": {
+                        "memory": {
+                          "amount": 100.0,
+                          "format": "MiB"
+                        },
+                        "cpu": {
+                          "amount": 0.5,
+                          "format": "cores"
+                        }
+                      }
+                    }
+                  },
+                  "recommendation_terms": {
+                    "short_term": {
+                      "notifications": {
+                        "112101": {
+                          "type": "info",
+                          "message": "Cost Recommendations Available",
+                          "code": 112101
+                        },
+                        "112102": {
+                          "type": "info",
+                          "message": "Performance Recommendations Available",
+                          "code": 112102
+                        }
+                      },
+                      "monitoring_start_time": "2023-04-01T12:00:00.000Z",
+                      "duration_in_hours": 24.0,
+                      "metrics_info": {
+                        "pod_count": {
+                          "avg": 27,
+                          "min": 27,
+                          "max": 27
+                        }
+                      },
+                      "recommendation_engines": {
+                        "cost": {
+                          "pods_count": 27,
+                          "confidence_level": 0.0,
+                          "config": {
+                            "resources": {
+                              "requests": {
+                                "memory": {
+                                  "amount": 238.2,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": 0.9299999999999999,
+                                  "format": "cores"
+                                }
+                              },
+                              "limits": {
+                                "memory": {
+                                  "amount": 238.2,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": 0.9299999999999999,
+                                  "format": "cores"
+                                }
+                              }
+                            }
+                          },
+                          "variation": {
+                            "resources": {
+                              "requests": {
+                                "memory": {
+                                  "amount": 187.98999999999998,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": -4.44,
+                                  "format": "cores"
+                                }
+                              },
+                              "limits": {
+                                "memory": {
+                                  "amount": 138.2,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": 0.42999999999999994,
+                                  "format": "cores"
+                                }
+                              }
+                            }
+                          },
+                          "notifications": {}
+                        },
+                        "performance": {
+                          "pods_count": 27,
+                          "confidence_level": 0.0,
+                          "config": {
+                            "resources": {
+                              "requests": {
+                                "memory": {
+                                  "amount": 238.2,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": 0.9299999999999999,
+                                  "format": "cores"
+                                }
+                              },
+                              "limits": {
+                                "memory": {
+                                  "amount": 238.2,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": 0.9299999999999999,
+                                  "format": "cores"
+                                }
+                              }
+                            }
+                          },
+                          "variation": {
+                            "resources": {
+                              "requests": {
+                                "memory": {
+                                  "amount": 187.98999999999998,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": -4.44,
+                                  "format": "cores"
+                                }
+                              },
+                              "limits": {
+                                "memory": {
+                                  "amount": 138.2,
+                                  "format": "MiB"
+                                },
+                                "cpu": {
+                                  "amount": 0.42999999999999994,
+                                  "format": "cores"
+                                }
+                              }
+                            }
+                          },
+                          "notifications": {}
+                        }
+                      }
+                    },
+                    "medium_term": {
+                      "duration_in_hours": 143.0,
+                      "notifications": {
+                        "120001": {
+                          "type": "info",
+                          "message": "There is not enough data available to generate a recommendation.",
+                          "code": 120001
+                        }
+                      }
+                    },
+                    "long_term": {
+                      "duration_in_hours": 240.0,
+                      "notifications": {
+                        "120001": {
+                          "type": "info",
+                          "message": "There is not enough data available to generate a recommendation.",
+                          "code": 120001
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+]
+```
+
+</details>
+
+**Error Responses**
+
+| HTTP Status Code | Description                                                                                        |
+|------------------|----------------------------------------------------------------------------------------------------|
+| 400              | experiment_name is mandatory.                                                                      |
+| 400              | Given timestamp - \" 2023-011-02T00:00:00.000Z \" is not a valid timestamp format.                 |
+| 400              | Not Found: experiment_name does not exist: exp_1.                                                  |
+| 400              | The Start time should precede the End time!                                                        |
 | 500              | Internal Server Error                                                                              |
 
